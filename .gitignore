@@ -1,0 +1,84 @@
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/captures
+
+# =========================
+# Android / Gradle
+# =========================
+.gradle/
+build/
+*/build/
+**/build/
+
+local.properties
+*.iml
+
+# Android Studio Navigation Editor temp files
+.navigation/
+
+# Android Studio captures
+captures/
+
+# External native build (CMake / ndk-build)
+.externalNativeBuild
+.cxx
+.externalNativeBuild/
+.cxx/
+
+# Kotlin
+*.kotlin_module
+
+# =========================
+# IntelliJ / Android Studio
+# =========================
+.idea/
+*.iws
+*.ipr
+*.iws
+out/
+
+# Uncomment if you want to keep project-level settings
+#!.idea/codeStyles/
+#!.idea/runConfigurations/
+
+# =========================
+# Android generated files
+# =========================
+*.apk
+*.aab
+*.ap_
+
+# =========================
+# Signing / keys (VERY important)
+# =========================
+*.jks
+*.keystore
+*.pem
+
+# If you store release signing configs locally
+key.properties
+
+# =========================
+# Logs / misc
+# =========================
+*.log
+*.tmp
+*.swp
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Firebase / Google services (optional handling)
+# =========================
+# Uncomment if you don't want to commit it:
+# google-services.json
+# firebase-appdistribution.properties

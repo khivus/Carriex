@@ -40,4 +40,11 @@ class ChatViewModel(
         messages.add(sentMessage)
         onStateChanged()
     }
+
+    /**
+     * Manually trigger a fetch of new messages from the transport.
+     */
+    fun refresh() {
+        messagingService.fetchNewMessages()
+    }
 }

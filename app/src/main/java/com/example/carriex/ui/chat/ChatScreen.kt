@@ -11,7 +11,7 @@ import com.example.carriex.crypto.keystore.AndroidKeyStoreKeyManager
 import com.example.carriex.messaging.MessagingService
 import com.example.carriex.presentation.chat.ChatViewModel
 import com.example.carriex.session.DefaultSessionManager
-import com.example.carriex.transport.InMemoryTransport
+import com.example.carriex.transport.ServerTransport
 
 /**
  * UI Layer: ChatScreen
@@ -22,7 +22,7 @@ import com.example.carriex.transport.InMemoryTransport
 class ChatScreen : Fragment() {
 
     // Shared infrastructure for the prototype
-    private val sharedTransport = InMemoryTransport()
+    private val sharedTransport = ServerTransport()
     private lateinit var cryptoEngine: LibsodiumCryptoEngine
 
     override fun onCreateView(
@@ -87,24 +87,41 @@ class ChatScreen : Fragment() {
         // Use lateinit to allow referencing the viewModel inside its own callback lambda
         lateinit var viewModel: ChatViewModel
         viewModel = ChatViewModel(service, targetId) {
-            // Update UI on state change
-            val logs = viewModel.messages.joinToString("\n") { msg ->
-                "[${msg.from}]: ${String(msg.content)}"
+            // Update UI on state change - Ensure it runs on UI thread
+            activity?.runOnUiThread {
+                val logs = viewModel.messages.joinToString("\n") { msg ->
+                    "[${msg.from}]: ${String(msg.content)}"
+                }
+                logView.text = logs
             }
-            logView.text = logs
         }
 
         val input = EditText(context).apply { hint = "Message to $targetId" }
         container.addView(input)
 
+        val buttonContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        container.addView(buttonContainer)
+
         val sendBtn = Button(context).apply {
             text = "Send"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             setOnClickListener {
                 viewModel.sendMessage(input.text.toString())
                 input.text.clear()
             }
         }
-        container.addView(sendBtn)
+        buttonContainer.addView(sendBtn)
+
+        val refreshBtn = Button(context).apply {
+            text = "Refresh"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                viewModel.refresh()
+            }
+        }
+        buttonContainer.addView(refreshBtn)
 
         return container
     }

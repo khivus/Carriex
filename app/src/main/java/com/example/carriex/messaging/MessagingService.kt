@@ -5,7 +5,8 @@ import com.example.carriex.model.Message
 import com.example.carriex.session.Session
 import com.example.carriex.session.SessionManager
 import com.example.carriex.session.SessionState
-import com.example.carriex.transport.InMemoryTransport
+import com.example.carriex.transport.ServerTransport
+import kotlin.concurrent.thread
 
 /**
  * Orchestrator of the messaging logic.
@@ -16,16 +17,26 @@ import com.example.carriex.transport.InMemoryTransport
 class MessagingService(
     private val userId: String,
     private val cryptoEngine: CryptoEngine,
-    private val transport: InMemoryTransport,
+    private val transport: ServerTransport,
     private val sessionManager: SessionManager,
 ) {
     var onMessageDecrypted: ((Message) -> Unit)? = null
     private val pendingMessages = mutableMapOf<String, MutableList<String>>()
 
-    init {
-        // Register this service instance with the transport layer
-        transport.register(userId) { incomingMessage ->
-            receive(incomingMessage)
+    /**
+     * Periodically fetch messages from the server.
+     * In a production app, this would use WebSockets or FCM.
+     */
+    fun fetchNewMessages() {
+        thread {
+            try {
+                val incomingMessages = transport.getAllMessages(userId)
+                incomingMessages.forEach { msg ->
+                    receive(msg)
+                }
+            } catch (e: Exception) {
+                // Handle or log error
+            }
         }
     }
 
@@ -71,7 +82,9 @@ class MessagingService(
             content = encryptedContent, 
             type = Message.MessageType.DATA
         )
-        transport.send(message)
+        thread {
+            transport.sendMessage(message)
+        }
     }
 
     /**
@@ -98,7 +111,9 @@ class MessagingService(
             content = keyPair.publicKey,
             type = Message.MessageType.KEY_EXCHANGE
         )
-        transport.send(exchangeMessage)
+        thread {
+            transport.sendMessage(exchangeMessage)
+        }
     }
 
     private fun handleKeyExchange(message: Message) {
@@ -123,7 +138,9 @@ class MessagingService(
                 content = myKeyPair.publicKey,
                 type = Message.MessageType.KEY_EXCHANGE
             )
-            transport.send(responseExchange)
+            thread {
+                transport.sendMessage(responseExchange)
+            }
             
             result
         }

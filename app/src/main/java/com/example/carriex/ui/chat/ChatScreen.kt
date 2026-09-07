@@ -114,15 +114,11 @@ class ChatScreen : Fragment() {
         }
         buttonContainer.addView(sendBtn)
 
-        val refreshBtn = Button(context).apply {
-            text = "Refresh"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener {
-                viewModel.refresh()
-            }
-        }
-        buttonContainer.addView(refreshBtn)
-
         return container
+    }
+
+    override fun onDestroyView() {
+        sharedTransport.disconnectWebSockets()
+        super.onDestroyView()
     }
 }

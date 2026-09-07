@@ -1,5 +1,7 @@
 package com.example.carriex.presentation.chat
 
+import android.os.Handler
+import android.os.Looper
 import com.example.carriex.messaging.MessagingService
 import com.example.carriex.model.Message
 
@@ -16,13 +18,16 @@ class ChatViewModel(
 ) {
     // List of decrypted messages to display in UI
     val messages = mutableListOf<Message>()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     init {
         // Observe incoming decrypted messages from the service
         messagingService.onMessageDecrypted = { message ->
             // Trace: ViewModel received decrypted message
-            messages.add(message)
-            onStateChanged()
+            mainHandler.post {
+                messages.add(message)
+                onStateChanged()
+            }
         }
     }
 

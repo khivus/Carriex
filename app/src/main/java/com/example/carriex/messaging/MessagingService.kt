@@ -23,9 +23,12 @@ class MessagingService(
     var onMessageDecrypted: ((Message) -> Unit)? = null
     private val pendingMessages = mutableMapOf<String, MutableList<String>>()
 
+    init {
+        transport.connectWebSocket(userId) { message -> receive(message) }
+    }
+
     /**
-     * Periodically fetch messages from the server.
-     * In a production app, this would use WebSockets or FCM.
+     * Fetch messages explicitly when HTTP fallback is needed.
      */
     fun fetchNewMessages() {
         thread {
@@ -43,6 +46,7 @@ class MessagingService(
     /**
      * Sends a plain text message. Initiates key exchange if session is missing.
      */
+    @Synchronized
     fun send(to: String, text: String) {
         val session = getOrRestoreSession(to)
         
@@ -82,14 +86,19 @@ class MessagingService(
             content = encryptedContent, 
             type = Message.MessageType.DATA
         )
-        thread {
-            transport.sendMessage(message)
+        sendViaTransport(message)
+    }
+
+    private fun sendViaTransport(message: Message) {
+        if (!transport.sendWebSocketMessage(message)) {
+            thread { transport.sendMessage(message) }
         }
     }
 
     /**
      * Internal handler for messages arriving from transport.
      */
+    @Synchronized
     private fun receive(message: Message) {
         when (message.type) {
             Message.MessageType.KEY_EXCHANGE -> handleKeyExchange(message)
@@ -111,9 +120,7 @@ class MessagingService(
             content = keyPair.publicKey,
             type = Message.MessageType.KEY_EXCHANGE
         )
-        thread {
-            transport.sendMessage(exchangeMessage)
-        }
+        sendViaTransport(exchangeMessage)
     }
 
     private fun handleKeyExchange(message: Message) {
@@ -138,9 +145,7 @@ class MessagingService(
                 content = myKeyPair.publicKey,
                 type = Message.MessageType.KEY_EXCHANGE
             )
-            thread {
-                transport.sendMessage(responseExchange)
-            }
+            sendViaTransport(responseExchange)
             
             result
         }

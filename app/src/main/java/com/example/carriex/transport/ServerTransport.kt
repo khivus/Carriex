@@ -1,6 +1,13 @@
 package com.example.carriex.transport
 
+import android.util.Log
 import com.example.carriex.model.Message
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -8,12 +15,106 @@ import java.net.URL
 
 /**
  * Server-based transport layer.
- * Communicates with a remote server via HTTP.
+ * Communicates with a remote server via WebSocket, with HTTP fallback.
  */
 class ServerTransport {
     companion object {
         // Hardcoded IP/Port for the server (10.0.2.2 is the host machine from Android Emulator)
         private const val BASE_URL = "http://10.0.2.2:5000"
+        private const val TAG = "ServerTransport"
+    }
+
+    private val client = OkHttpClient()
+    private class Connection {
+        var socket: WebSocket? = null
+        var connected = false
+    }
+    private val connections = mutableMapOf<String, Connection>()
+
+    @Synchronized
+    fun connectWebSocket(userId: String, onMessageReceived: (Message) -> Unit) {
+        connections.remove(userId)?.socket?.cancel()
+        val connection = Connection()
+        connections[userId] = connection
+        val url = BASE_URL.toHttpUrl().newBuilder()
+            .addPathSegment("ws").addPathSegment(userId).build()
+        connection.socket = client.newWebSocket(Request.Builder().url(url).build(),
+            object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    synchronized(this@ServerTransport) {
+                        if (connections[userId] !== connection) {
+                            webSocket.cancel()
+                            return
+                        }
+                        connection.connected = true
+                    }
+                    Log.d(TAG, "WebSocket connected: $userId")
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    synchronized(this@ServerTransport) {
+                        if (connections[userId] !== connection) return
+                    }
+                    try {
+                        val payload = JSONObject(text)
+                        if (payload.optString("type") == "message") {
+                            decodeMessage(payload.getJSONObject("message"), userId)
+                                ?.let(onMessageReceived)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Unable to process WebSocket message for $userId", e)
+                    }
+                }
+
+                private fun removeConnection() {
+                    synchronized(this@ServerTransport) {
+                        if (connections[userId] === connection) connections.remove(userId)
+                    }
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    removeConnection()
+                    webSocket.close(code, reason)
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    removeConnection()
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    removeConnection()
+                    Log.w(TAG, "WebSocket failed: $userId", t)
+                }
+            })
+    }
+
+    /** Returns whether an open socket accepted the message, not a delivery receipt. */
+    @Synchronized
+    fun sendWebSocketMessage(message: Message): Boolean {
+        val connection = connections[message.from] ?: return false
+        if (!connection.connected) return false
+        return connection.socket?.send(encodeMessage(message).put("type", "send").toString()) == true
+    }
+
+    @Synchronized
+    fun disconnectWebSockets() {
+        connections.values.forEach { it.socket?.cancel() }
+        connections.clear()
+    }
+
+    private fun encodeMessage(message: Message): JSONObject = JSONObject().apply {
+        put("sender", message.from)
+        put("recipient", message.to)
+        put("ciphertext", (byteArrayOf(message.type.ordinal.toByte()) + message.content).toHex())
+    }
+
+    private fun decodeMessage(payload: JSONObject, userId: String): Message? {
+        val rawBytes = payload.getString("ciphertext").decodeHex()
+        if (rawBytes.isEmpty()) return null
+        val type = Message.MessageType.values().getOrElse(rawBytes[0].toInt()) {
+            Message.MessageType.DATA
+        }
+        return Message(payload.getString("from"), userId, rawBytes.copyOfRange(1, rawBytes.size), type)
     }
 
     /**
@@ -49,18 +150,7 @@ class ServerTransport {
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
 
-            // To preserve the MessageType without server modification, 
-            // we prepend it to the ciphertext as the first byte.
-            val typePrefix = message.type.ordinal.toByte()
-            val fullPayload = ByteArray(message.content.size + 1)
-            fullPayload[0] = typePrefix
-            System.arraycopy(message.content, 0, fullPayload, 1, message.content.size)
-
-            val payload = JSONObject().apply {
-                put("sender", message.from)
-                put("recipient", message.to)
-                put("ciphertext", fullPayload.toHex())
-            }
+            val payload = encodeMessage(message)
 
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
             val success = conn.responseCode == 201
@@ -88,23 +178,7 @@ class ServerTransport {
 
                 for (i in 0 until jsonArray.length()) {
                     val item = jsonArray.getJSONObject(i)
-                    val from = item.getString("from")
-                    val rawHex = item.getString("ciphertext")
-                    val rawBytes = rawHex.decodeHex()
-
-                    if (rawBytes.isNotEmpty()) {
-                        val typeOrdinal = rawBytes[0].toInt()
-                        val type = Message.MessageType.values().getOrElse(typeOrdinal) { 
-                            Message.MessageType.DATA 
-                        }
-                        val content = rawBytes.copyOfRange(1, rawBytes.size)
-                        messages.add(Message(
-                            from = from,
-                            to = userId,
-                            content = content,
-                            type = type
-                        ))
-                    }
+                    decodeMessage(item, userId)?.let(messages::add)
                 }
             }
             conn.disconnect()
@@ -118,10 +192,12 @@ class ServerTransport {
         joinToString("") { "%02x".format(it) }
 
     private fun String.decodeHex(): ByteArray {
+        require(length % 2 == 0) { "Invalid ciphertext length" }
         val result = ByteArray(length / 2)
         for (i in 0 until length step 2) {
             val firstDigit = Character.digit(this[i], 16)
             val secondDigit = Character.digit(this[i + 1], 16)
+            require(firstDigit >= 0 && secondDigit >= 0) { "Invalid ciphertext hex" }
             result[i / 2] = ((firstDigit shl 4) + secondDigit).toByte()
         }
         return result

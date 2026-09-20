@@ -6,7 +6,7 @@ plugins {
 android {
     namespace = "com.example.carriex"
     compileSdk {
-        version = release(36)
+        version = release(37)
     }
 
     externalNativeBuild {
@@ -18,7 +18,7 @@ android {
     defaultConfig {
         applicationId = "com.example.carriex"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 3
         versionName = "1.2"
 

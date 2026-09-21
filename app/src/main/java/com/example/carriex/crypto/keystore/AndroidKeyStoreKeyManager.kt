@@ -20,7 +20,7 @@ import javax.crypto.spec.GCMParameterSpec
  * 1. An AES wrapping key is stored in Android Keystore.
  * 2. Libsodium identity keys and session keys are encrypted with the wrapping key and stored in SharedPreferences.
  */
-class AndroidKeyStoreKeyManager(context: Context) : KeyManager {
+class AndroidKeyStoreKeyManager(context: Context, namespace: String = "") : KeyManager {
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -33,7 +33,7 @@ class AndroidKeyStoreKeyManager(context: Context) : KeyManager {
     }
 
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences(PREFS_NAME + namespace, Context.MODE_PRIVATE)
 
     override fun generateOrGetIdentityKeyPair(userId: String): KeyPair {
         val encryptedKeyBase64 = prefs.getString(IDENTITY_KEY_ALIAS_PREFIX + userId, null)

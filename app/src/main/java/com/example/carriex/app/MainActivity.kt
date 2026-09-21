@@ -20,7 +20,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Minimal setup: just set the toolbar
-        setSupportActionBar(binding.toolbar)
+        // The chat screen provides its own navigation and headings.
+        binding.toolbar.visibility = android.view.View.GONE
     }
 }

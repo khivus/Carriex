@@ -6,7 +6,8 @@ import com.example.carriex.session.Session
 import com.example.carriex.session.SessionManager
 import com.example.carriex.session.SessionState
 import com.example.carriex.transport.ServerTransport
-import kotlin.concurrent.thread
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Orchestrator of the messaging logic.
@@ -23,7 +24,13 @@ class MessagingService(
     var onMessageDecrypted: ((Message) -> Unit)? = null
     private val pendingMessages = mutableMapOf<String, MutableList<String>>()
 
-    init {
+    private val outgoing = Executors.newSingleThreadExecutor()
+    private val fetching = AtomicBoolean(false)
+    @Volatile private var closed = false
+    var onError: ((String) -> Unit)? = null
+    @Synchronized
+    fun close() { closed = true; outgoing.shutdownNow(); onMessageDecrypted = null; onError = null }
+    fun start() {
         transport.connectWebSocket(userId) { message -> receive(message) }
     }
 
@@ -31,14 +38,17 @@ class MessagingService(
      * Fetch messages explicitly when HTTP fallback is needed.
      */
     fun fetchNewMessages() {
-        thread {
+        if (closed || !fetching.compareAndSet(false, true)) return
+        kotlin.concurrent.thread {
             try {
                 val incomingMessages = transport.getAllMessages(userId)
                 incomingMessages.forEach { msg ->
                     receive(msg)
                 }
             } catch (e: Exception) {
-                // Handle or log error
+                onError?.invoke("Unable to receive messages: ${e.message}")
+            } finally {
+                fetching.set(false)
             }
         }
     }
@@ -48,6 +58,7 @@ class MessagingService(
      */
     @Synchronized
     fun send(to: String, text: String) {
+        if (closed) return
         val session = getOrRestoreSession(to)
         
         if (session.state != SessionState.ESTABLISHED) {
@@ -90,19 +101,24 @@ class MessagingService(
     }
 
     private fun sendViaTransport(message: Message) {
-        if (!transport.sendWebSocketMessage(message)) {
-            thread { transport.sendMessage(message) }
+        if (closed) return
+        outgoing.execute {
+            if (!closed && !transport.sendWebSocketMessage(message) && !transport.sendMessage(message)) {
+                onError?.invoke("Could not send to ${message.to}. Check your connection and reconnect before trying again.")
+            }
         }
     }
-
     /**
      * Internal handler for messages arriving from transport.
      */
     @Synchronized
     private fun receive(message: Message) {
-        when (message.type) {
+        if (closed) return
+        try { when (message.type) {
             Message.MessageType.KEY_EXCHANGE -> handleKeyExchange(message)
             Message.MessageType.DATA -> handleDataMessage(message)
+        } } catch (e: Exception) {
+            onError?.invoke("Unable to read a message from ${message.from}: ${e.message}")
         }
     }
 

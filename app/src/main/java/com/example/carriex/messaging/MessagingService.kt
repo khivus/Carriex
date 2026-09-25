@@ -20,18 +20,28 @@ class MessagingService(
     private val cryptoEngine: CryptoEngine,
     private val transport: ServerTransport,
     private val sessionManager: SessionManager,
+    private val chatStore: ChatStore,
+    private val scope: String,
 ) {
-    var onMessageDecrypted: ((Message) -> Unit)? = null
-    private val pendingMessages = mutableMapOf<String, MutableList<String>>()
+    var onMessageDecrypted: ((Message) -> Boolean)? = null
+    var onStatus: ((String, Message.DeliveryStatus) -> Unit)? = null
+    private val pendingMessages = mutableMapOf<String, MutableList<Message>>()
 
     private val outgoing = Executors.newSingleThreadExecutor()
     private val fetching = AtomicBoolean(false)
     @Volatile private var closed = false
     var onError: ((String) -> Unit)? = null
     @Synchronized
-    fun close() { closed = true; outgoing.shutdownNow(); onMessageDecrypted = null; onError = null }
+    fun close() { closed = true; outgoing.shutdownNow(); onMessageDecrypted = null; onStatus = null; onError = null }
     fun start() {
+        transport.onReceipt = { id, state ->
+            if (state == "received") updateStatus(id, Message.DeliveryStatus.RECEIVED)
+        }
         transport.connectWebSocket(userId) { message -> receive(message) }
+        chatStore.exchangeOutbox(scope, userId).forEach(::sendViaTransport)
+        chatStore.pending(scope).forEach { (plain, wire) ->
+            if (wire != null) sendViaTransport(wire) else send(plain)
+        }
     }
 
     /**
@@ -45,6 +55,13 @@ class MessagingService(
                 incomingMessages.forEach { msg ->
                     receive(msg)
                 }
+                transport.statuses(userId).forEach { (id, state) ->
+                    updateStatus(id, if (state == "received") Message.DeliveryStatus.RECEIVED else Message.DeliveryStatus.SENT)
+                }
+                chatStore.pending(scope).forEach { (plain, wire) ->
+                    if (wire != null) sendViaTransport(wire) else send(plain)
+                }
+                chatStore.exchangeOutbox(scope, userId).forEach(::sendViaTransport)
             } catch (e: Exception) {
                 onError?.invoke("Unable to receive messages: ${e.message}")
             } finally {
@@ -57,12 +74,14 @@ class MessagingService(
      * Sends a plain text message. Initiates key exchange if session is missing.
      */
     @Synchronized
-    fun send(to: String, text: String) {
+    fun send(plain: Message) {
         if (closed) return
+        val to = plain.to
         val session = getOrRestoreSession(to)
         
         if (session.state != SessionState.ESTABLISHED) {
-            pendingMessages.getOrPut(to) { mutableListOf() }.add(text)
+            val pending = pendingMessages.getOrPut(to) { mutableListOf() }
+            if (pending.none { it.id == plain.id }) pending.add(plain)
             if (session.state == SessionState.NONE) {
                 initiateKeyExchange(to)
             }
@@ -70,12 +89,17 @@ class MessagingService(
         }
 
         // Encrypt and send
-        encryptAndSend(to, text, session)
+        encryptAndSend(plain, session)
     }
 
     private fun getOrRestoreSession(to: String): Session {
         val session = sessionManager.getSession(to)
         if (session.state == SessionState.NONE) {
+            chatStore.pendingSession(scope, to)?.let { (id, pair) ->
+                val restored = Session(state = SessionState.PENDING, myKeyPair = pair)
+                sessionManager.updateSession(to, restored)
+                return restored
+            }
             val restoredKeys = cryptoEngine.loadSessionKeys(userId, to)
             if (restoredKeys != null) {
                 val restoredSession = Session(
@@ -89,22 +113,28 @@ class MessagingService(
         return session
     }
 
-    private fun encryptAndSend(to: String, text: String, session: Session) {
-        val encryptedContent = cryptoEngine.encrypt(text.toByteArray(), session)
+    private fun encryptAndSend(plain: Message, session: Session) {
+        val encryptedContent = cryptoEngine.encrypt(plain.content, session)
         val message = Message(
             from = userId, 
-            to = to, 
+            to = plain.to,
             content = encryptedContent, 
-            type = Message.MessageType.DATA
+            type = Message.MessageType.DATA,
+            id = plain.id,
         )
+        chatStore.setWire(scope, message)
         sendViaTransport(message)
     }
 
     private fun sendViaTransport(message: Message) {
         if (closed) return
+        if (message.type == Message.MessageType.KEY_EXCHANGE) chatStore.saveExchangeOutbox(scope, message)
         outgoing.execute {
-            if (!closed && !transport.sendWebSocketMessage(message) && !transport.sendMessage(message)) {
-                onError?.invoke("Could not send to ${message.to}. Check your connection and reconnect before trying again.")
+            if (!closed && transport.sendMessage(message)) {
+                if (message.type == Message.MessageType.DATA) updateStatus(message.id, Message.DeliveryStatus.SENT)
+                else chatStore.clearExchangeOutbox(scope, message.id)
+            } else if (!closed) {
+                onError?.invoke("Could not send to ${message.to}. Will retry while connected.")
             }
         }
     }
@@ -114,10 +144,19 @@ class MessagingService(
     @Synchronized
     private fun receive(message: Message) {
         if (closed) return
-        try { when (message.type) {
-            Message.MessageType.KEY_EXCHANGE -> handleKeyExchange(message)
-            Message.MessageType.DATA -> handleDataMessage(message)
-        } } catch (e: Exception) {
+        try {
+            val handled = when (message.type) {
+                Message.MessageType.KEY_EXCHANGE -> {
+                    if (!chatStore.hasExchange(scope, message.id)) {
+                        handleKeyExchange(message)
+                        chatStore.markExchange(scope, message.id)
+                    }
+                    true
+                }
+                Message.MessageType.DATA -> handleDataMessage(message)
+            }
+            if (handled) outgoing.execute { if (!closed) transport.acknowledge(userId, message.id) }
+        } catch (e: Exception) {
             onError?.invoke("Unable to read a message from ${message.from}: ${e.message}")
         }
     }
@@ -136,6 +175,7 @@ class MessagingService(
             content = keyPair.publicKey,
             type = Message.MessageType.KEY_EXCHANGE
         )
+        chatStore.savePendingSession(scope, to, exchangeMessage.id, keyPair)
         sendViaTransport(exchangeMessage)
     }
 
@@ -173,20 +213,28 @@ class MessagingService(
         establishedSession.sessionKeys?.let { keys ->
             cryptoEngine.saveSessionKeys(userId, message.from, keys)
         }
+        chatStore.clearPendingSession(scope, message.from)
 
         // Now that the session is fully established on both ends,
         // send any messages that were queued while waiting for the key exchange.
-        pendingMessages.remove(message.from)?.forEach { text ->
-            encryptAndSend(message.from, text, establishedSession)
+        pendingMessages.remove(message.from)?.forEach { plain ->
+            encryptAndSend(plain, establishedSession)
         }
     }
 
-    private fun handleDataMessage(message: Message) {
+    private fun handleDataMessage(message: Message): Boolean {
+        if (chatStore.hasIncoming(scope, message.id)) return true
         val session = getOrRestoreSession(message.from)
         if (session.state == SessionState.ESTABLISHED) {
             val decryptedContent = cryptoEngine.decrypt(message.content, session)
             val decryptedMessage = message.copy(content = decryptedContent)
-            onMessageDecrypted?.invoke(decryptedMessage)
+            return onMessageDecrypted?.invoke(decryptedMessage) == true
         }
+        return false
+    }
+
+    private fun updateStatus(id: String, status: Message.DeliveryStatus) {
+        chatStore.mark(scope, id, status)
+        onStatus?.invoke(id, status)
     }
 }

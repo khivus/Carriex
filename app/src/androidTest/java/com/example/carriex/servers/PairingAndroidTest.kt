@@ -1,6 +1,7 @@
 package com.example.carriex.servers
 
 import android.content.Context
+import android.content.pm.ActivityInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -15,8 +16,8 @@ import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.example.carriex.app.MainActivity
+import com.example.carriex.ui.chat.PortraitQrCaptureActivity
 import com.google.android.material.textfield.TextInputEditText
-import com.journeyapps.barcodescanner.CaptureActivity
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -79,8 +80,9 @@ class PairingAndroidTest {
             onView(withText("Scan server QR")).perform(click())
             instrumentation.waitForIdleSync()
             instrumentation.runOnMainSync {
-                assertTrue(ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
-                    .any { it is CaptureActivity })
+                val scanner = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<PortraitQrCaptureActivity>().single()
+                assertEquals(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, scanner.requestedOrientation)
             }
             pressBack()
             onView(withText("Saved servers")).check(matches(isDisplayed()))

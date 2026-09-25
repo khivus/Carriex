@@ -10,8 +10,11 @@ data class Message(
     val from: String,
     val to: String,
     val content: ByteArray,
-    val type: MessageType
+    val type: MessageType,
+    val id: String = java.util.UUID.randomUUID().toString().replace("-", ""),
+    val status: DeliveryStatus? = null,
 ) {
+    enum class DeliveryStatus { SENDING, SENT, RECEIVED }
     enum class MessageType {
         KEY_EXCHANGE,
         DATA

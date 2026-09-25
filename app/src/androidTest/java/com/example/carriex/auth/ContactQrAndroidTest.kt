@@ -16,7 +16,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.carriex.app.MainActivity
 import com.example.carriex.servers.PairedServer
-import com.journeyapps.barcodescanner.CaptureActivity
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.RGBLuminanceSource
@@ -60,7 +59,7 @@ class ContactQrAndroidTest {
     private fun scan(button: String, text: String) {
         // Exercise the real ActivityResult callback; camera decoding is covered by QR round-trip tests.
         val result = Intent().putExtra("SCAN_RESULT", text).putExtra("SCAN_RESULT_FORMAT", "QR_CODE")
-        val monitor = instrumentation.addMonitor(CaptureActivity::class.java.name, ActivityResult(Activity.RESULT_OK, result), true)
+        val monitor = instrumentation.addMonitor(com.example.carriex.ui.chat.PortraitQrCaptureActivity::class.java.name, ActivityResult(Activity.RESULT_OK, result), true)
         try {
             onView(withText(button)).perform(click())
             instrumentation.waitForIdleSync()

@@ -8,7 +8,9 @@
 4. On another device connected to the same server, tap **Scan friend's ID** and scan the QR directly from their phone. Review and choose **Open chat**. **New chat** still accepts pasted IDs. Inside a conversation, **Verify friend's ID** scans and compares against that conversation's ID, showing match, mismatch, own-ID, or invalid-QR results. Incoming conversations appear automatically.
 5. Tap a conversation to open it; use **All chats** or Android Back to return to the list. **Servers** lets you disconnect and select another saved server.
 
-Server settings, the local user ID, and contacts are saved. Contacts and encrypted session keys are isolated by server public-key fingerprint. Older contacts stored under the previous address-based namespace are not automatically migrated; add their IDs again after pairing. Messages, unread counts, and drafts survive screen rotation but are held only for the current app session; disconnecting or terminating the process clears them. There is no background notification service or delivery/read receipt support. A local message bubble does not confirm delivery. A recipient must connect to finish the initial key exchange.
+Server settings, the local user ID, contacts, and chat history are saved. Contacts, encrypted session keys, and chat history are isolated by server public-key fingerprint. Chat message bodies and pending wire payloads are encrypted with a phone-local Android Keystore key. Tap **Chats** beside a saved server to read its history offline. App backup/device transfer remains disabled. Older contacts stored under the previous address-based namespace are not automatically migrated; add their IDs again after pairing. Unread counts and drafts are session-only. A recipient must connect to finish the initial key exchange.
+
+Outgoing bubbles show **Sending…** until the server accepts the message, **Sent** after server acceptance, and **Received** after the recipient saves it locally and acknowledges it. Messages waiting for acceptance are retried while connected and after restarting the app. The server holds encrypted messages until acknowledgement or expiry. There is no viewed/read receipt or background notification service yet. Receipt reporting can later be disabled independently of the recipient acknowledgement used to clear the server queue.
 
 Both HTTP and WebSocket messaging now require device authentication. Sessions renew automatically on expiry and server restart. The server holds public keys in memory; private keys stay on the device. See the server's `AUTHENTICATION.md` for the exact protocol. Enrollment proves key ownership; there is no searchable directory or administrator approval flow.
 
@@ -54,6 +56,7 @@ Run `./gradlew.bat :app:testDebugUnitTest :app:assembleDebug` to test and build.
 abrupt connection loss, server close frames, and cancellation of pending retries.
 The debug APK is `app/build/outputs/apk/debug/app-debug.apk`.
 
-Connection status is not a delivery receipt: a locally accepted WebSocket send
-can still be lost if the connection breaks before server processing. These tests
-do not replace device checks for Wi-Fi/mobile switching or Android backgrounding.
+Connection status is separate from message status. Pending first-message key
+exchange material is also encrypted locally and restored after an app restart.
+These tests do not replace device checks for Wi-Fi/mobile switching or Android
+backgrounding.

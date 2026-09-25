@@ -39,6 +39,7 @@ class ServerTransport(
     @Volatile var connectionError: String? = null
         private set
     @Volatile var onConnectionStatusChanged: ((ConnectionStatus) -> Unit)? = null
+    @Volatile var onReceipt: ((String, String) -> Unit)? = null
     private var closed = false
     private val retries = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "carriex-reconnect").apply { isDaemon = true }
@@ -106,6 +107,8 @@ class ServerTransport(
                         val payload = JSONObject(text)
                         if (payload.optString("type") == "message") {
                             decodeMessage(payload.getJSONObject("message"), userId)?.let(connection.receive)
+                        } else if (payload.optString("type") == "receipt") {
+                            onReceipt?.invoke(payload.getString("id"), payload.getString("state"))
                         }
                     } catch (_: Exception) { /* Ignore malformed frames. */ }
                 }
@@ -163,6 +166,7 @@ class ServerTransport(
         closed = true
         disconnectWebSockets()
         onConnectionStatusChanged = null
+        onReceipt = null
         retries.shutdownNow()
         authentication.close()
         client.closeOffThread()
@@ -221,7 +225,32 @@ class ServerTransport(
         } catch (_: Exception) { emptyList() }
     }
 
+    fun acknowledge(userId: String, id: String): Boolean {
+        require(userId == authentication.userId)
+        return try {
+            val body = JSONObject().put("ids", org.json.JSONArray().put(id)).toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder().url(base.newBuilder().addPathSegment("messages")
+                .addPathSegment(userId).addPathSegment("ack").build()).post(body).build()
+            authenticated(request).use { it.code == 200 }
+        } catch (_: Exception) { false }
+    }
+
+    fun statuses(userId: String): List<Pair<String, String>> {
+        require(userId == authentication.userId)
+        return try {
+            val request = Request.Builder().url(base.newBuilder().addPathSegment("statuses")
+                .addPathSegment(userId).build()).build()
+            authenticated(request).use { response ->
+                if (response.code != 200) return emptyList()
+                val rows = JSONObject(response.body!!.string()).getJSONArray("statuses")
+                (0 until rows.length()).map { rows.getJSONObject(it).let { row -> row.getString("id") to row.getString("state") } }
+            }
+        } catch (_: Exception) { emptyList() }
+    }
+
     private fun encodeMessage(message: Message) = JSONObject().apply {
+        put("id", message.id)
         put("sender", message.from)
         put("recipient", message.to)
         put("ciphertext", (byteArrayOf(message.type.ordinal.toByte()) + message.content).toHex())
@@ -230,7 +259,8 @@ class ServerTransport(
         val bytes = payload.getString("ciphertext").decodeHex()
         if (bytes.isEmpty()) return null
         val type = Message.MessageType.values().getOrElse(bytes[0].toInt()) { Message.MessageType.DATA }
-        return Message(payload.getString("from"), userId, bytes.copyOfRange(1, bytes.size), type)
+        return Message(payload.getString("from"), userId, bytes.copyOfRange(1, bytes.size), type,
+            payload.optString("id").ifEmpty { java.util.UUID.randomUUID().toString().replace("-", "") })
     }
     private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
     private fun String.decodeHex(): ByteArray {

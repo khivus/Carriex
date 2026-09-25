@@ -18,6 +18,7 @@ import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import com.example.carriex.presentation.chat.ChatViewModel
+import com.example.carriex.model.Message
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
@@ -113,7 +114,7 @@ class ChatScreen : Fragment() {
         val restoreFocus = composer?.hasFocus() == true && renderedPeer == model.selectedPeer
         composer = null
         root.removeAllViews()
-        if (!model.connected) setup() else if (model.selectedPeer == null) chats() else conversation()
+        if (!model.connected && !model.offlineView) setup() else if (model.selectedPeer == null) chats() else conversation()
         renderedPeer = model.selectedPeer
         if (restoreFocus) composer?.let { it.requestFocus(); it.setSelection(it.text.length) }
     }
@@ -127,8 +128,9 @@ class ChatScreen : Fragment() {
         content.addView(label("Scan a server's pairing QR or paste its pairing text once. Its identity is checked whenever you connect.", 14f, true))
         content.addView(button("Scan server QR") {
             scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setCaptureActivity(PortraitQrCaptureActivity::class.java)
                 .setPrompt("Scan the pairing QR shown by your Carriex server")
-                .setBeepEnabled(false).setOrientationLocked(false))
+                .setBeepEnabled(false).setOrientationLocked(true))
         }.apply { isEnabled = !model.connecting })
         content.addView(button("Import pairing text") { importPairingText() }.apply { isEnabled = !model.connecting })
         model.error?.let { content.addView(label(it, 14f).apply { setTextColor(color(androidx.appcompat.R.attr.colorError)) }) }
@@ -148,6 +150,7 @@ class ChatScreen : Fragment() {
             row.addView(label("Server key: ${server.fingerprint.chunked(8).joinToString(" ")}", 11f, true))
             val actions = LinearLayout(requireContext())
             actions.addView(button("Connect") { model.connect(server) }.apply { isEnabled = !model.connecting }, LinearLayout.LayoutParams(0, -2, 1f))
+            actions.addView(button("Chats") { model.viewSaved(server) }.apply { isEnabled = !model.connecting }, LinearLayout.LayoutParams(0, -2, 1f))
             actions.addView(button("Forget") {
                 MaterialAlertDialogBuilder(requireContext()).setTitle("Forget ${server.name}?")
                     .setMessage("This removes the saved address and trusted server key. You will need its QR or pairing text to connect again.")
@@ -244,8 +247,9 @@ class ChatScreen : Fragment() {
     private fun scanContact(expectedId: String? = null) {
         expectedScannedPeer = expectedId
         contactScanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            .setCaptureActivity(PortraitQrCaptureActivity::class.java)
             .setPrompt("Scan My ID QR directly from your friend's phone")
-            .setBeepEnabled(false).setOrientationLocked(false))
+            .setBeepEnabled(false).setOrientationLocked(true))
     }
 
     private fun reviewContact(text: String, expectedId: String?) {
@@ -292,10 +296,11 @@ class ChatScreen : Fragment() {
         root.addView(label("Chats", 32f).apply { setTypeface(typeface, Typeface.BOLD) })
         root.addView(label("${model.activeServer?.name} · ${model.activeServer?.url}", 12f, true))
         val actions = LinearLayout(requireContext())
+        if (!model.connected) actions.addView(button("Connect") { model.activeServer?.let(model::connect) }, LinearLayout.LayoutParams(0, -2, 1f))
         actions.addView(button("My ID QR") { showMyIdQr() }, LinearLayout.LayoutParams(0, -2, 1f))
         actions.addView(button("Servers") {
             MaterialAlertDialogBuilder(requireContext()).setTitle("Change server?")
-                .setMessage("This closes the connection and clears messages from this session. Your user ID and saved contacts are kept.")
+                .setMessage("This closes the connection. Saved messages remain on this phone.")
                 .setNegativeButton("Cancel", null).setPositiveButton("Continue") { _, _ -> model.disconnect() }.show()
         }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(actions)
@@ -347,7 +352,7 @@ class ChatScreen : Fragment() {
         identityActions.addView(button("My ID QR") { showMyIdQr() }, LinearLayout.LayoutParams(0, -2, 1f))
         identityActions.addView(button("Verify friend's ID") { scanContact(peer) }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(identityActions)
-        root.addView(label("Messages stay in this app session", 12f, true))
+        root.addView(label("Messages are saved on this phone", 12f, true))
         errorBanner()
         val list = column()
         val scroll = ScrollView(requireContext()).apply { addView(list) }
@@ -366,7 +371,19 @@ class ChatScreen : Fragment() {
                 setTextColor(color(if (mine) com.google.android.material.R.attr.colorOnPrimaryContainer else com.google.android.material.R.attr.colorOnSurface))
                 setTextIsSelectable(true)
             }
-            row.addView(bubble, LinearLayout.LayoutParams(-2, -2)); list.addView(row)
+            val bubbleColumn = column().apply { gravity = if (mine) Gravity.END else Gravity.START }
+            bubbleColumn.addView(bubble, LinearLayout.LayoutParams(-2, -2))
+            if (mine) bubbleColumn.addView(label(when (message.status) {
+                Message.DeliveryStatus.SENDING -> "Sending…"
+                Message.DeliveryStatus.SENT -> "Sent"
+                Message.DeliveryStatus.RECEIVED -> "Received"
+                null -> ""
+            }, 12f, true))
+            row.addView(bubbleColumn, LinearLayout.LayoutParams(-2, -2)); list.addView(row)
+        }
+        if (!model.connected) {
+            root.addView(label("Connect to send messages", 14f, true))
+            return
         }
         val composeRow = LinearLayout(requireContext()).apply { gravity = Gravity.BOTTOM }
         val input = TextInputEditText(requireContext()).apply {

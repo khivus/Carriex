@@ -17,6 +17,10 @@
         android:theme="@style/Theme.Carriex"
         android:usesCleartextTraffic="true">
         <activity
+            android:name=".ui.chat.PortraitQrCaptureActivity"
+            android:screenOrientation="portrait"
+            android:exported="false" />
+        <activity
             android:name=".app.MainActivity"
             android:windowSoftInputMode="adjustResize"
             android:exported="true"

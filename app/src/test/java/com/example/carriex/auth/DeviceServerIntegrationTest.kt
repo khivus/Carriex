@@ -24,10 +24,14 @@ class DeviceServerIntegrationTest {
         val port = ServerSocket(0).use { it.localPort }
         val url = "http://127.0.0.1:$port"
         private val log = File.createTempFile("carriex-auth-test-", ".log")
+        private val dataDir = java.nio.file.Files.createTempDirectory("carriex-auth-data-").toFile().apply {
+            resolve("messages.sqlite3").deleteOnExit(); deleteOnExit()
+        }
         private var process: Process? = null
         fun start() {
             process = ProcessBuilder(python, "-c", "from src.app import create_app; create_app({'ALLOW_INSECURE_HTTP': True, 'AUTH_SESSION_TTL': 3}).run(host='127.0.0.1',port=$port,threaded=True,use_reloader=False)")
-                .directory(File(root)).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(log)).start()
+                .directory(File(root)).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(log))
+                .apply { environment()["CARRIEX_DATA_DIR"] = dataDir.absolutePath }.start()
             val client = OkHttpClient()
             try {
                 val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
@@ -64,8 +68,10 @@ class DeviceServerIntegrationTest {
             val sender = ServerTransport(server.url, DeviceAuthentication(server.url, alice), 40)
             val recipient = ServerTransport(server.url, DeviceAuthentication(server.url, bob), 40)
             val incoming = LinkedBlockingQueue<Message>()
+            val receipts = LinkedBlockingQueue<Pair<String, String>>()
             val states = LinkedBlockingQueue<ServerTransport.ConnectionStatus>()
             recipient.onConnectionStatusChanged = { states.offer(it) }
+            sender.onReceipt = { id, state -> receipts.offer(id to state) }
             try {
                 assertTrue(sender.testServerActive())
                 assertTrue(recipient.testServerActive())
@@ -78,11 +84,16 @@ class DeviceServerIntegrationTest {
                 val received = incoming.poll(5, TimeUnit.SECONDS)!!
                 assertEquals(alice.userId, received.from)
                 assertArrayEquals(message.content, received.content)
+                assertEquals(message.id, received.id)
+                assertTrue(recipient.acknowledge(bob.userId, received.id))
+                assertEquals(message.id to "received", receipts.poll(5, TimeUnit.SECONDS))
+                assertEquals("received", sender.statuses(alice.userId).single { it.first == message.id }.second)
                 states.clear()
                 assertEquals(ServerTransport.ConnectionStatus.RECONNECTING, states.poll(6, TimeUnit.SECONDS))
                 assertEquals(ServerTransport.ConnectionStatus.CONNECTED, states.poll(6, TimeUnit.SECONDS))
-                assertTrue(sender.sendMessage(message))
-                assertArrayEquals(message.content, incoming.poll(5, TimeUnit.SECONDS)!!.content)
+                val second = Message(alice.userId, bob.userId, "after renewal".toByteArray(), Message.MessageType.DATA)
+                assertTrue(sender.sendMessage(second))
+                assertArrayEquals(second.content, incoming.poll(5, TimeUnit.SECONDS)!!.content)
             } finally { sender.close(); recipient.close() }
         }
     }

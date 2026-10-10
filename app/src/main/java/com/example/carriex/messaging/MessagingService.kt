@@ -114,7 +114,7 @@ class MessagingService(
     }
 
     private fun encryptAndSend(plain: Message, session: Session) {
-        val encryptedContent = cryptoEngine.encrypt(plain.content, session)
+        val encryptedContent = cryptoEngine.encrypt(MessagePayload.encode(plain.content, plain.sentAt), session)
         val message = Message(
             from = userId, 
             to = plain.to,
@@ -227,7 +227,8 @@ class MessagingService(
         val session = getOrRestoreSession(message.from)
         if (session.state == SessionState.ESTABLISHED) {
             val decryptedContent = cryptoEngine.decrypt(message.content, session)
-            val decryptedMessage = message.copy(content = decryptedContent)
+            val payload = MessagePayload.decode(decryptedContent)
+            val decryptedMessage = message.copy(content = payload.content, sentAt = payload.sentAt)
             return onMessageDecrypted?.invoke(decryptedMessage) == true
         }
         return false

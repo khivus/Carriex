@@ -13,6 +13,8 @@ data class Message(
     val type: MessageType,
     val id: String = java.util.UUID.randomUUID().toString().replace("-", ""),
     val status: DeliveryStatus? = null,
+    /** Sender's original send time in epoch milliseconds; null for legacy messages. */
+    val sentAt: Long? = null,
 ) {
     enum class DeliveryStatus { SENDING, SENT, RECEIVED }
     enum class MessageType {

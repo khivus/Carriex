@@ -52,6 +52,58 @@ class PairedServerTest {
         assertEquals(original, disk)
     }
 
+    @Test fun startupSelectionIsExclusiveOptionalAndSurvivesReloadAndReimport() {
+        var disk: String? = null
+        val store = ServerListStore({ disk }, { disk = it; true })
+        val key = certificate()
+        val first = PairedServer.parse(payload(key).toString())
+        val second = PairedServer.parse(payload(certificate(), "https://192.168.1.10:8443", "Office").toString())
+        store.save(first); store.save(second)
+        assertNull(store.autoConnectUrl()) // Existing lists opt out by default.
+        store.setAutoConnect(first.url)
+        store.save(PairedServer.parse(payload(key, name = "Renamed").toString()))
+        assertEquals(first.url, store.autoConnectUrl())
+        store.setAutoConnect(second.url)
+        val reloaded = ServerListStore({ disk }, { disk = it; true })
+        assertEquals(second.url, reloaded.autoConnectUrl())
+        val records = org.json.JSONArray(disk)
+        assertFalse(records.getJSONObject(0).getBoolean("auto_connect"))
+        assertTrue(records.getJSONObject(1).getBoolean("auto_connect"))
+        reloaded.setAutoConnect(null)
+        assertNull(store.autoConnectUrl())
+        store.setAutoConnect(first.url)
+        store.remove(second.url)
+        assertEquals(first.url, store.autoConnectUrl())
+        store.remove(first.url)
+        store.save(first)
+        assertNull(store.autoConnectUrl()) // Forgetting does not select a replacement.
+    }
+
+    @Test fun startupSelectionRejectsUnknownServerAndFailedWritesKeepPreviousChoice() {
+        var disk: String? = null
+        val store = ServerListStore({ disk }, { disk = it; true })
+        val server = PairedServer.parse(payload(certificate()).toString())
+        store.save(server); store.setAutoConnect(server.url)
+        val original = disk
+        assertThrows(IllegalArgumentException::class.java) { store.setAutoConnect("https://unknown.example") }
+        assertThrows(IllegalStateException::class.java) {
+            ServerListStore({ disk }, { false }).setAutoConnect(null)
+        }
+        assertEquals(original, disk)
+        assertEquals(server.url, store.autoConnectUrl())
+    }
+
+    @Test fun legacyListsDoNotAutoconnectAndAmbiguousStartupChoicesAreRejected() {
+        val first = payload(certificate())
+        val second = payload(certificate(), "https://192.168.1.10:8443")
+        val legacy = org.json.JSONArray().put(first).put(second)
+        val store = ServerListStore({ legacy.toString() }, { false })
+        assertEquals(2, store.list().size)
+        assertNull(store.autoConnectUrl())
+        first.put("auto_connect", true); second.put("auto_connect", true)
+        assertThrows(IllegalArgumentException::class.java) { store.autoConnectUrl() }
+    }
+
     @Test fun failedWritesAndCorruptStorageDoNotAppearSuccessful() {
         val server = PairedServer.parse(payload(certificate()).toString())
         assertThrows(IllegalStateException::class.java) { ServerListStore({ null }, { false }).save(server) }

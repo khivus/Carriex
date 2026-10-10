@@ -15,12 +15,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Phone-owned history and outgoing queue. Message bodies are encrypted before SQLite sees them. */
-class ChatStore(context: Context) : SQLiteOpenHelper(context, "chat-v1.db", null, 2) {
+class ChatStore(context: Context) : SQLiteOpenHelper(context, "chat-v1.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE messages (
             id TEXT PRIMARY KEY, scope TEXT NOT NULL, peer TEXT NOT NULL,
             sender TEXT NOT NULL, recipient TEXT NOT NULL, body BLOB NOT NULL,
-            wire BLOB, status TEXT, created_at INTEGER NOT NULL
+            wire BLOB, status TEXT, created_at INTEGER NOT NULL, sent_at INTEGER
         )""")
         db.execSQL("CREATE INDEX conversation ON messages(scope, peer, created_at)")
         db.execSQL("CREATE TABLE processed_exchange (scope TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(scope,id))")
@@ -28,8 +28,12 @@ class ChatStore(context: Context) : SQLiteOpenHelper(context, "chat-v1.db", null
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion == 1 && newVersion == 2) createExchangeTables(db)
-        else throw IllegalStateException("Chat database migration from $oldVersion is required")
+        if (oldVersion !in 1..2 || newVersion != 3)
+            throw IllegalStateException("Chat database migration from $oldVersion is required")
+        if (oldVersion == 1) createExchangeTables(db)
+        db.execSQL("ALTER TABLE messages ADD COLUMN sent_at INTEGER")
+        // Old outgoing rows were created when sending; incoming rows only have arrival time.
+        db.execSQL("UPDATE messages SET sent_at=created_at WHERE status IS NOT NULL")
     }
 
     private fun createExchangeTables(db: SQLiteDatabase) {
@@ -75,6 +79,7 @@ class ChatStore(context: Context) : SQLiteOpenHelper(context, "chat-v1.db", null
             put("body", seal(scope, message.id, message.content))
             put("status", Message.DeliveryStatus.SENDING.name)
             put("created_at", System.currentTimeMillis())
+            put("sent_at", message.sentAt ?: System.currentTimeMillis())
         }
         require(writableDatabase.insertOrThrow("messages", null, values) != -1L)
     }
@@ -86,6 +91,7 @@ class ChatStore(context: Context) : SQLiteOpenHelper(context, "chat-v1.db", null
             put("sender", message.from); put("recipient", message.to)
             put("body", seal(scope, message.id, message.content))
             put("created_at", System.currentTimeMillis())
+            message.sentAt?.let { put("sent_at", it) }
         }
         return writableDatabase.insertWithOnConflict("messages", null, values, SQLiteDatabase.CONFLICT_IGNORE) != -1L
     }
@@ -163,13 +169,13 @@ class ChatStore(context: Context) : SQLiteOpenHelper(context, "chat-v1.db", null
 
     fun history(scope: String): List<Message> {
         val messages = mutableListOf<Message>()
-        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "status"),
+        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "status", "sent_at"),
             "scope=?", arrayOf(scope), null, null, "created_at, rowid").use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getString(0)
                 val status = cursor.getString(4)?.let(Message.DeliveryStatus::valueOf)
                 messages.add(Message(cursor.getString(1), cursor.getString(2), open(scope, id, cursor.getBlob(3)),
-                    Message.MessageType.DATA, id, status))
+                    Message.MessageType.DATA, id, status, if (cursor.isNull(5)) null else cursor.getLong(5)))
             }
         }
         return messages
@@ -177,12 +183,13 @@ class ChatStore(context: Context) : SQLiteOpenHelper(context, "chat-v1.db", null
 
     fun pending(scope: String): List<Pair<Message, Message?>> {
         val pending = mutableListOf<Pair<Message, Message?>>()
-        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "wire"),
+        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "wire", "sent_at"),
             "scope=? AND status='SENDING'", arrayOf(scope), null, null, "created_at").use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getString(0)
                 val sender = cursor.getString(1); val recipient = cursor.getString(2)
-                val plain = Message(sender, recipient, open(scope, id, cursor.getBlob(3)), Message.MessageType.DATA, id)
+                val plain = Message(sender, recipient, open(scope, id, cursor.getBlob(3)), Message.MessageType.DATA, id,
+                    sentAt = if (cursor.isNull(5)) null else cursor.getLong(5))
                 val wire = if (cursor.isNull(4)) null else Message(sender, recipient,
                     open(scope, id, cursor.getBlob(4)), Message.MessageType.DATA, id)
                 pending.add(plain to wire)

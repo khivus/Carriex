@@ -16,10 +16,12 @@ data class Message(
     /** Sender's original send time in epoch milliseconds; null for legacy messages. */
     val sentAt: Long? = null,
 ) {
-    enum class DeliveryStatus { SENDING, SENT, RECEIVED }
+    enum class DeliveryStatus { SENDING, SENT, RECEIVED, EXPIRED, FAILED }
     enum class MessageType {
         KEY_EXCHANGE,
-        DATA
+        DATA,
+        /** Local presentation of a verified membership transition; never sent as chat data. */
+        GROUP_EVENT
     }
 
     override fun equals(other: Any?): Boolean {

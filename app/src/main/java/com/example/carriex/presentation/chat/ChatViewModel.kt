@@ -7,12 +7,12 @@ import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import com.example.carriex.auth.AndroidDeviceIdentity
 import com.example.carriex.auth.DeviceAuthentication
-import com.example.carriex.crypto.keystore.AndroidKeyStoreKeyManager
-import com.example.carriex.crypto.libsodium.LibsodiumCryptoEngine
 import com.example.carriex.messaging.MessagingService
 import com.example.carriex.messaging.ChatStore
+import com.example.carriex.messaging.GroupMessagingService
+import com.example.carriex.messaging.GroupConversation
 import com.example.carriex.model.Message
-import com.example.carriex.session.DefaultSessionManager
+import com.example.carriex.notifications.MessageRequestNotifications
 import com.example.carriex.servers.PairedServer
 import com.example.carriex.servers.ServerListStore
 import com.example.carriex.transport.ServerTransport
@@ -53,10 +53,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var selectedPeer: String? = null
         private set
+    var selectedGroup: String? = null
+        private set
+    private val groupsByServer = mutableMapOf<String, List<GroupConversation>>()
+    private val optimisticGroups = mutableMapOf<String, MutableList<Message>>()
+    private val savingGroupMessages = mutableMapOf<String, String>()
+    private val groupOperations = mutableMapOf<String, String>()
+    val groups get() = groupsByServer[scope].orEmpty().map { group ->
+        val pending = optimisticGroups["$scope/${group.state.id}"].orEmpty()
+        group.copy(messages = group.messages + pending.filter { candidate -> group.messages.none { it.id == candidate.id } })
+    }
+    val currentGroup get() = groups.firstOrNull { it.state.id == selectedGroup }
+    val selectedConversation get() = selectedGroup?.let { "group:$it" } ?: selectedPeer
+    val groupDrafts = mutableMapOf<String, String>()
+    val groupSending get() = "$scope/$selectedGroup" in savingGroupMessages
+    fun groupProgress(id: String): String? = groupOperations["$scope/$id"]
     private class ServerChats {
         val conversations = linkedMapOf<String, MutableList<Message>>()
         val unread = mutableMapOf<String, Int>()
         val drafts = mutableMapOf<String, String>()
+        val removing = mutableSetOf<String>()
+        val removedIds = mutableSetOf<String>()
         var loaded = false
         var loading = false
     }
@@ -68,9 +85,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var transport: ServerTransport? = null
     private var pendingTransport: ServerTransport? = null
     private var service: MessagingService? = null
+    private var groupService: GroupMessagingService? = null
     @Volatile private var generation = 0
     private var viewGeneration = 0
     private var scope = ""
+    private var resumeServer: PairedServer? = null
 
     private fun refreshServers() {
         try { savedServers = serverStore.list(); autoConnectUrl = serverStore.autoConnectUrl() }
@@ -102,9 +121,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun forgetServer(server: PairedServer) {
+        MessageRequestNotifications.clear(getApplication(), server.fingerprint)
+        MessageRequestNotifications.clearInvitations(getApplication(), server.fingerprint)
         if (activeServer?.url == server.url) disconnect()
         if (viewedServer?.url == server.url) {
-            viewGeneration++; viewedServer = null; selectedPeer = null; serversVisible = true
+            viewGeneration++; viewedServer = null; selectedPeer = null; selectedGroup = null; serversVisible = true
         }
         try { serverStore.remove(server.url); refreshServers(); error = null }
         catch (e: Exception) { error = e.message }
@@ -113,19 +134,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun showError(detail: String) { error = detail; changed() }
     fun viewSaved(server: PairedServer) {
-        val attempt = ++viewGeneration
-        viewedServer = server; scope = server.fingerprint; selectedPeer = null; serversVisible = false
+        ++viewGeneration
+        viewedServer = server; scope = server.fingerprint; selectedPeer = null; selectedGroup = null; serversVisible = false
         error = null; changed()
+        loadSaved(server)
+    }
+
+    private fun loadSaved(server: PairedServer) {
+        val attempt = viewGeneration
         val chats = chatsFor(server.fingerprint)
         if (chats.loaded || chats.loading) return
         chats.loading = true
         worker.execute {
             val history = runCatching { chatStore.history(server.fingerprint) }
+            val groupHistory = runCatching { GroupMessagingService.cached(chatStore, server.fingerprint, userId) }
             handler.post {
                 chats.loading = false
                 if (history.isFailure) {
                     if (attempt == viewGeneration) error = "Unable to unlock saved messages: ${history.exceptionOrNull()?.message}"
                 } else loadHistory(server.fingerprint, history.getOrThrow())
+                groupHistory.getOrNull()?.let { groupsByServer[server.fingerprint] = it }
                 changed()
             }
         }
@@ -136,17 +164,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         chats.conversations.clear()
         history.forEach { saved ->
             val peer = if (saved.from == userId) saved.to else saved.from
-            chats.conversations.getOrPut(peer) { mutableListOf() }.add(saved)
+            if(peer !in chats.removing && saved.id !in chats.removedIds)
+                chats.conversations.getOrPut(peer) { mutableListOf() }.add(saved)
         }
         preferences.getStringSet("contacts_$serverScope", emptySet())!!.filter(::validUserId).sorted().forEach {
-            chats.conversations.getOrPut(it) { mutableListOf() }
+            if(it !in chats.removing) chats.conversations.getOrPut(it) { mutableListOf() }
         }
         chats.loaded = true
+        saveContacts(serverScope)
     }
     private val poll = object : Runnable {
         override fun run() {
             val current = service ?: return
             current.fetchNewMessages()
+            groupService?.sync()
             handler.postDelayed(this, 5000)
         }
     }
@@ -156,9 +187,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         savedServers.firstOrNull { it.url == autoConnectUrl }?.let(::connect)
     }
 
-    fun connect(server: PairedServer) {
+    fun connect(server: PairedServer, navigate: Boolean = true) {
+        if(navigate) resumeServer = null
         if (activeServer?.url == server.url) {
-            if (connecting || connected) { viewSaved(server); return }
+            if (connecting || connected) { if (navigate) viewSaved(server); return }
         }
         val device = identity.getOrElse { error = "Unable to access device authentication key: ${it.message}"; changed(); return }
         if (savedServers.none { it.url == server.url && it.fingerprint == server.fingerprint }) {
@@ -169,14 +201,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ServerTransport(endpoint, DeviceAuthentication(endpoint, device, server.client()), client = server.client())
         } catch (e: Exception) { error = e.message; changed(); return }
         // Cancel sockets, retries and any in-flight setup before starting another server.
-        disconnect()
+        closeConnection()
         activeServer = server
         pendingTransport = candidate
         connecting = true
         connectionStatus = ServerTransport.ConnectionStatus.CONNECTING
         error = null
         // Show cached history immediately; connection setup runs after the history read.
-        viewSaved(server)
+        if (navigate) viewSaved(server) else loadSaved(server)
         val attempt = ++generation
         worker.execute {
             val healthy = candidate.testServerActive()
@@ -198,20 +230,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val chatScope = server.fingerprint
                     val chats = chatsFor(chatScope)
-                    val crypto = LibsodiumCryptoEngine(AndroidKeyStoreKeyManager(getApplication(), chatScope))
                     transport = candidate
                     candidate.onConnectionStatusChanged = { status -> handler.post {
                         if (attempt == generation && connectionStatus != status) { connectionStatus = status; changed() }
                     } }
-                    val activeService = MessagingService(userId, crypto, candidate, DefaultSessionManager(), chatStore, chatScope)
+                    val activeService = MessagingService(userId, device, candidate, chatStore, chatScope,
+                        contacts = { preferences.getStringSet("contacts_$chatScope",emptySet()).orEmpty().toSet() },
+                        blocked = { preferences.getStringSet("blocked_$chatScope",emptySet()).orEmpty().toSet() },
+                        allowFallback = { preferences.getBoolean("fallback_$chatScope",false) })
                     service = activeService
+                    val activeGroups = GroupMessagingService(device, candidate, chatStore, chatScope,
+                        allowFallback = { preferences.getBoolean("fallback_$chatScope", false) })
+                    groupService = activeGroups
+                    activeGroups.onChanged = { groups -> handler.post { if(attempt == generation) {
+                        groups.forEach { group -> optimisticGroups["$chatScope/${group.state.id}"]?.removeAll { pending ->
+                            group.messages.any { it.id == pending.id }
+                        } }
+                        groupsByServer[chatScope] = groups
+                        groups.forEach { MessageRequestNotifications.groupInvitation(getApplication(), server, it.state, userId) }
+                        changed()
+                    } } }
+                    activeGroups.onError = { detail -> handler.post { if(attempt == generation) { error = detail; changed() } } }
+                    candidate.onGroupsChanged = { activeGroups.sync() }
+                    activeService.onNewMessageRequest = { handler.post { notifyPendingMessageRequests(server) } }
+                    activeService.onRequestsChanged = { handler.post { if(attempt==generation) changed() } }
                     activeService.onError = { detail -> handler.post { if (attempt == generation) {
                         error = contactErrorLabel(detail, chatScope); changed()
                     } } }
                     activeService.onMessageDecrypted = { message ->
-                        val inserted = chatStore.addIncoming(chatScope, message)
-                        if (inserted) handler.post {
-                            if (attempt == generation) {
+                        handler.post {
+                            if (attempt == generation && message.from !in chats.removing && message.id !in chats.removedIds) {
                                 chats.conversations.getOrPut(message.from) { mutableListOf() }.add(message)
                                 if (serversVisible || scope != chatScope || selectedPeer != message.from)
                                     chats.unread[message.from] = (chats.unread[message.from] ?: 0) + 1
@@ -236,9 +284,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     connected = true
                     worker.execute {
                         if (attempt != generation) return@execute
-                        try { activeService.start() }
+                        try { activeService.start(); activeGroups.start() }
                         catch (e: Exception) { handler.post { if (attempt == generation) {
                             activeService.close(); candidate.close()
+                            activeGroups.close(); groupService = null
                             handler.removeCallbacks(poll)
                             service = null; transport = null; connected = false
                             connectionStatus = ServerTransport.ConnectionStatus.DISCONNECTED
@@ -249,6 +298,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (e: Exception) {
                     candidate.close()
                     service?.close()
+                    groupService?.close(); groupService = null
                     service = null
                     connected = false
                     transport = null
@@ -263,11 +313,146 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun openChat(peer: String): Boolean {
         val id = peer.trim()
         if (!validUserId(id) || id == userId) return false
+        if(id !in conversations && conversations.size>=128) { error="At most 128 contacts are supported";changed();return false }
         conversations.getOrPut(id) { mutableListOf() }
         selectedPeer = id
+        selectedGroup = null
         unread.remove(id)
         saveContacts(); changed()
+        service?.refreshPolicy()
         return true
+    }
+
+    fun messageRequests(): List<ChatStore.Request> = chatStore.requests(scope)
+    fun openGroup(id: String) {
+        if(groups.none { it.state.id == id }) return
+        selectedGroup = id; selectedPeer = null; serversVisible = false; error = null; changed()
+    }
+    fun createGroup(name: String) {
+        if(!viewingConnectedServer) { showError("Connect to this server before creating a group."); return }
+        val chatScope = scope
+        groupService?.create(name) { id -> handler.post { if(scope == chatScope) openGroup(id) } }
+    }
+    fun changeGroup(id: String, action: String, target: String = "") {
+        if(!viewingConnectedServer) { showError("Connect to this server to change group membership."); return }
+        val active = groupService ?: return
+        val key = "$scope/$id"
+        if(key in groupOperations || (action == "join" && groups.any { it.state.id == id && it.joining })) return
+        val attempt = generation
+        groupOperations[key] = when(action) {
+            "join" -> "Joining group…"
+            "leave" -> "Leaving group…"
+            else -> "Updating group…"
+        }
+        if(action == "join") openGroup(id) else changed()
+        active.change(id, action, target) { handler.post {
+            if(attempt == generation) { groupOperations.remove(key); changed() }
+        } }
+    }
+    fun sendGroup(text: String) {
+        if(!viewingConnectedServer || text.isBlank()) return
+        val id = selectedGroup ?: return
+        val group = currentGroup ?: return
+        if(!group.ready || group.joining || group.state.closed || userId !in group.state.members) return
+        val active = groupService ?: return
+        val key = "$scope/$id"
+        if(key in savingGroupMessages || key in groupOperations) return
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        try { com.example.carriex.messaging.MessageLimits.requirePlaintext(bytes) }
+        catch(e: com.example.carriex.messaging.MessageSizeException) { showError(e.message ?: "Message is too large"); return }
+        val message = Message(userId, id, bytes, Message.MessageType.DATA,
+            status = Message.DeliveryStatus.SENDING, sentAt = System.currentTimeMillis())
+        val chatScope = scope
+        val attempt = generation
+        savingGroupMessages[key] = message.id
+        optimisticGroups.getOrPut(key) { mutableListOf() }.add(message)
+        groupDrafts.remove(key)
+        error = null
+        changed() // Clear the composer and show Sending before any disk or network work.
+        worker.execute {
+            try {
+                active.persistOutgoing(id, message, group.state.epoch)
+            } catch(e: Exception) {
+                handler.post {
+                    if(savingGroupMessages[key] == message.id) savingGroupMessages.remove(key)
+                    optimisticGroups[key]?.removeAll { it.id == message.id }
+                    if(groupDrafts[key].isNullOrEmpty()) groupDrafts[key] = text
+                    if(scope == chatScope) { error = "Message could not be saved: ${e.message}"; changed() }
+                }
+                return@execute
+            }
+            handler.post {
+                if(savingGroupMessages[key] == message.id) savingGroupMessages.remove(key)
+                groupsByServer[chatScope] = groupsByServer[chatScope].orEmpty().map { savedGroup ->
+                    if(savedGroup.state.id != id || savedGroup.messages.any { it.id == message.id }) savedGroup
+                    else savedGroup.copy(messages = savedGroup.messages + message)
+                }
+                if(scope == chatScope) changed()
+            }
+            if(attempt == generation) active.flush(id)
+        }
+    }
+    fun notifyPendingMessageRequests(server: PairedServer? = activeServer ?: viewedServer) {
+        server ?: return
+        if(savedServers.none { it.url == server.url && it.fingerprint == server.fingerprint }) return
+        val contacts = preferences.getStringSet("contacts_${server.fingerprint}", emptySet()).orEmpty()
+        val blocked = preferences.getStringSet("blocked_${server.fingerprint}", emptySet()).orEmpty()
+        val count = chatStore.requests(server.fingerprint).count { it.peer !in contacts && it.peer !in blocked }
+        MessageRequestNotifications.show(getApplication(), server, count)
+    }
+    fun removeChat(peer: String) {
+        val chatScope = scope
+        val chats = chatsFor(chatScope)
+        if(peer !in chats.conversations || !chats.removing.add(peer)) return
+        // Unknown future arrivals become message requests; this does not block the peer.
+        saveContacts(chatScope)
+        if(activeServer?.fingerprint == chatScope) service?.refreshPolicy()
+        worker.execute {
+            val result = runCatching { chatStore.removeChat(chatScope,peer) }
+            handler.post {
+                if(result.isSuccess) {
+                    chats.removedIds.addAll(result.getOrThrow())
+                    chats.conversations.remove(peer); chats.unread.remove(peer); chats.drafts.remove(peer)
+                    if(scope == chatScope && selectedPeer == peer) { selectedPeer = null; serversVisible = false }
+                } else error = "Unable to remove chat: ${result.exceptionOrNull()?.message}"
+                chats.removing.remove(peer)
+                saveContacts(chatScope)
+                if(activeServer?.fingerprint == chatScope) service?.refreshPolicy()
+                changed()
+            }
+        }
+    }
+    fun allowFallback():Boolean = preferences.getBoolean("fallback_$scope",false)
+    fun setAllowFallback(value:Boolean) {
+        preferences.edit().putBoolean("fallback_$scope",value).commit(); changed()
+        if(value) chatStore.requests(scope).filter { it.peer in conversations }.forEach { service?.acceptRequests(it.peer) }
+    }
+    fun acceptRequest(peer:String) {
+        if(!openChat(peer)) return
+        MessageRequestNotifications.clear(getApplication(), scope)
+        service?.acceptRequests(peer)
+    }
+    fun blockContact(peer:String) {
+        val ids=preferences.getStringSet("blocked_$scope",emptySet()).orEmpty().toMutableSet()
+        if(ids.size>=128 && peer !in ids) { showError("Blocked device limit reached");return }
+        ids.add(peer);preferences.edit().putStringSet("blocked_$scope",ids).commit()
+        MessageRequestNotifications.clear(getApplication(), scope)
+        chatStore.discardRequests(scope,peer); service?.refreshPolicy(); changed()
+    }
+    fun blockedContacts():List<String> = preferences.getStringSet("blocked_$scope",emptySet()).orEmpty().sorted()
+    fun unblockContact(peer:String) {
+        preferences.edit().putStringSet("blocked_$scope",blockedContacts().filter { it!=peer }.toSet()).commit()
+        service?.refreshPolicy();changed()
+    }
+    fun contactKeyProtection(peer:String):String = when(chatStore.x3dh(scope).get("peer-protection/$peer")) {
+        "one-time" -> "Double Ratchet; initial exchange used a one-time key."
+        "fallback" -> "Double Ratchet; initial exchange used fallback without a one-time key."
+        else -> "No session protection information yet."
+    }
+    fun discardRequest(peer:String) {
+        chatStore.discardRequests(scope,peer)
+        MessageRequestNotifications.clear(getApplication(), scope)
+        changed()
     }
 
     private fun contactNameKey(peer: String, serverScope: String = scope) = "contact_name_${serverScope}_$peer"
@@ -285,8 +470,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return if (validUserId(peer)) detail.replaceFirst(peer, contactLabel(peer, serverScope)) else detail
     }
 
+    fun contactVerified(peer: String): Boolean = preferences.getBoolean("verified_id_${scope}_$peer", false)
+    fun markContactVerified(peer: String) {
+        if (!validUserId(peer) || peer == userId || viewedServer == null) return
+        if (!preferences.edit().putBoolean("verified_id_${scope}_$peer", true).commit()) {
+            error = "Unable to save contact verification"
+        }
+        changed()
+    }
+    fun contactSecurityLabel(peer: String): String = if (contactVerified(peer))
+        "Contact ID verified" else "Contact ID not verified"
+    fun contactEncryptionFingerprint(peer: String): String? = chatStore.x3dh(scope).get("peer/$peer")?.let {
+        com.example.carriex.crypto.x3dh.X3dhCrypto.hex(com.example.carriex.crypto.x3dh.X3dhCrypto.hash(
+            com.example.carriex.crypto.x3dh.X3dhCrypto.decode(it, 32))).chunked(8).joinToString(" ")
+    }
+
     fun setContactName(peer: String, name: String): Boolean {
-        if (viewedServer == null || !validUserId(peer) || peer == userId) return false
+        if (viewedServer == null || !validUserId(peer)) return false
         val value = name.trim()
         if (value.length > 64) return false
         if (!preferences.edit().putString(contactNameKey(peer), value).commit()) {
@@ -296,20 +496,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
-    fun showChats() { selectedPeer = null; serversVisible = false; changed() }
+    fun showChats() { selectedPeer = null; selectedGroup = null; serversVisible = false; changed() }
+    fun restartSecureSession(peer: String) {
+        if (!viewingConnectedServer) {
+            error = "Connect to this server before restarting a secure session."; changed(); return
+        }
+        if (validUserId(peer)) service?.restartSession(peer)
+    }
     fun showServers() {
-        viewGeneration++; selectedPeer = null; serversVisible = true; changed()
+        viewGeneration++; selectedPeer = null; selectedGroup = null; serversVisible = true; changed()
     }
     fun dismissError() { error = null; changed() }
     fun send(text: String) {
+        if(selectedGroup != null) { sendGroup(text); return }
         if (!viewingConnectedServer) return
         val peer = selectedPeer ?: return
         if (text.isBlank()) return
+        val body = text.toByteArray(Charsets.UTF_8)
+        try { com.example.carriex.messaging.MessageLimits.requirePlaintext(body) }
+        catch (e: com.example.carriex.messaging.MessageSizeException) { error = e.message; changed(); return }
         val activeService = service ?: return
         val activeScope = scope
         val chats = chatsFor(activeScope)
         val attempt = generation
-        val message = Message(userId, peer, text.toByteArray(), Message.MessageType.DATA,
+        val message = Message(userId, peer, body, Message.MessageType.DATA,
             status = Message.DeliveryStatus.SENDING, sentAt = System.currentTimeMillis())
         drafts.remove(peer); changed()
         worker.execute {
@@ -334,30 +544,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun disconnect() {
+    /** Background mode never downloads message bodies. Keep the page and drafts intact. */
+    fun onBackground() {
+        resumeServer = activeServer?.takeIf { connected || connecting }
+        closeConnection()
+        changed()
+    }
+
+    fun onForeground() {
+        val server = resumeServer
+        resumeServer = null
+        if (server != null && savedServers.any { it == server }) connect(server, navigate = false)
+    }
+
+    private fun closeConnection() {
         generation++
-        viewGeneration++
+        savingGroupMessages.clear()
+        groupOperations.clear()
+        optimisticGroups.clear()
         activeServer?.let { chatsByServer[it.fingerprint]?.loaded = false }
         handler.removeCallbacks(poll)
         service?.close()
         service = null
+        groupService?.close(); groupService = null
+        groupsByServer[activeServer?.fingerprint]?.let { groups ->
+            activeServer?.fingerprint?.let { groupsByServer[it] = groups.map { group -> group.copy(ready = false) } }
+        }
         transport?.close()
         transport = null
         pendingTransport?.close()
         pendingTransport = null
         connected = false
         activeServer = null
-        viewedServer = null
-        serversVisible = true
         connectionStatus = ServerTransport.ConnectionStatus.DISCONNECTED
         connecting = false
+    }
+
+    fun disconnect() {
+        resumeServer = null
+        closeConnection()
+        viewGeneration++
+        viewedServer = null
+        serversVisible = true
         selectedPeer = null
+        selectedGroup = null
         error = null
         changed()
     }
 
     private fun saveContacts(serverScope: String = scope) {
-        preferences.edit().putStringSet("contacts_$serverScope", chatsFor(serverScope).conversations.keys.toSet()).apply()
+        val chats = chatsFor(serverScope)
+        preferences.edit().putStringSet("contacts_$serverScope", chats.conversations.keys.filterNot { it in chats.removing }.toSet()).apply()
     }
     private fun changed() { onStateChanged?.invoke() }
     override fun onCleared() { onStateChanged = null; disconnect(); worker.shutdown() }

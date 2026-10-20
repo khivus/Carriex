@@ -10,6 +10,30 @@ class DeviceIdentity(private val keyPair: KeyPair) {
     val userId: String = MessageDigest.getInstance("SHA-256").digest(publicKey)
         .joinToString("") { "%02x".format(it) }
 
+    fun signGroupState(bytes: ByteArray): ByteArray {
+        require(bytes.size <= 16_384 && String(bytes, Charsets.US_ASCII).startsWith("Carriex group state v1\n"))
+        return Signature.getInstance("SHA256withECDSA").run {
+            initSign(keyPair.private); update(bytes); sign()
+        }
+    }
+
+    fun signGroupAdmission(bytes: ByteArray): ByteArray {
+        require(bytes.size <= 512 && String(bytes, Charsets.US_ASCII).startsWith("Carriex group admission v1\n"))
+        return Signature.getInstance("SHA256withECDSA").run {
+            initSign(keyPair.private); update(bytes); sign()
+        }
+    }
+
+    /** Separate domain from login proofs; the private signing key stays in Keystore. */
+    fun signEncryptionIdentity(identityKey: ByteArray): ByteArray {
+        require(identityKey.size == 32)
+        return Signature.getInstance("SHA256withECDSA").run {
+            initSign(keyPair.private)
+            update(com.example.carriex.crypto.x3dh.X3dhCrypto.binding(userId, identityKey))
+            sign()
+        }
+    }
+
     fun signChallenge(userId: String, challenge: String, audience: String): ByteArray {
         require(userId == this.userId) { "Server returned a different device identity" }
         require(challenge.matches(Regex("[A-Za-z0-9_-]{43}"))) { "Invalid server challenge" }

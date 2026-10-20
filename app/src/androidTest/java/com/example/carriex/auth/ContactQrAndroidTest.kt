@@ -44,12 +44,18 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Before
 import org.junit.runner.RunWith
 import java.net.InetAddress
 
 @RunWith(AndroidJUnit4::class)
 class ContactQrAndroidTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+
+    @Before fun allowMessageRequestNotifications() {
+        if(android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.grantRuntimePermission(
+            instrumentation.targetContext.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
+    }
 
     private fun assertSafeContentBounds(scenario: ActivityScenario<MainActivity>) {
         scenario.onActivity { activity ->
@@ -80,9 +86,7 @@ class ContactQrAndroidTest {
             assertTrue(preferences.edit().putString("paired_servers_v1", JSONArray().put(profile.toJson()).toString()).commit())
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 assertSafeContentBounds(scenario)
-                onView(withText("My ID")).check(doesNotExist())
-                onView(withText("Chats")).perform(scrollTo(), click())
-                onView(withText("My ID")).perform(click())
+                navigate("My ID")
                 onView(withContentDescription("Your Carriex user ID QR")).inRoot(isDialog()).check { view, error ->
                     if (error != null) throw error
                     val bitmap = ((view as ImageView).drawable as BitmapDrawable).bitmap
@@ -99,6 +103,27 @@ class ContactQrAndroidTest {
             val editor = preferences.edit()
             if (original == null) editor.remove("paired_servers_v1") else editor.putString("paired_servers_v1", original)
             assertTrue(editor.commit())
+        }
+    }
+
+    private fun navigate(title: String) {
+        onView(withContentDescription("Open navigation menu")).perform(click())
+        onView(withText(title)).perform(click())
+    }
+
+    private fun openChatOptions() {
+        onView(withContentDescription("More options")).perform(click())
+    }
+
+    private fun assertMenuIcon(title: String) {
+        onView(withText(title)).check { view, error ->
+            if (error != null) throw error
+            var row = view
+            while (row != null && row !is androidx.appcompat.view.menu.ListMenuItemView) row = row.parent as? View
+            val icon = row?.findViewById<ImageView>(androidx.appcompat.R.id.icon)
+            assertNotNull("Menu icon for $title", icon)
+            assertEquals("Visible menu icon for $title", View.VISIBLE, icon!!.visibility)
+            assertNotNull("Drawable for $title", icon.drawable)
         }
     }
 
@@ -132,6 +157,14 @@ class ContactQrAndroidTest {
                         .put("user_id", identity.userId).put("audience", url).put("challenge", "a".repeat(43)).put("expires_in", 60).toString())
                     request.path == "/auth/verify" -> MockResponse().setBody(JSONObject()
                         .put("user_id", identity.userId).put("token", "t".repeat(43)).put("expires_in", 3600).toString())
+                    request.path == "/prekeys/status" -> MockResponse().setBody("{\"available\":0,\"message_ttl_seconds\":2592000}")
+                    request.path == "/prekeys" -> {
+                        val upload=JSONObject(request.body.readUtf8())
+                        MockResponse().setBody(JSONObject().put("revision",upload.getLong("revision"))
+                            .put("publication_id",upload.getString("publication_id"))
+                            .put("signed_prekey_id",upload.getJSONObject("signed_prekey").getString("id")).toString())
+                    }
+                    request.path?.endsWith("/policy") == true -> MockResponse().setBody("{}")
                     request.path?.startsWith("/ws/") == true -> MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
                         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
                     })
@@ -145,7 +178,10 @@ class ContactQrAndroidTest {
             try {
                 assertTrue(preferences.edit().putString("paired_servers_v1", JSONArray().put(profile.toJson()).toString()).commit())
                 ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                    onView(withText("Connect")).perform(scrollTo(), click())
+                    onView(withContentDescription("Options for ${profile.name}")).perform(click())
+                    listOf("Connect on app startup", "Server details", "Forget server").forEach(::assertMenuIcon)
+                    pressBack()
+                    onView(withContentDescription("Connect to ${profile.name}")).perform(scrollTo(), click())
                     val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
                     while (true) {
                         try { onView(withText("Connected - device authenticated")).check(matches(isDisplayed())); break }
@@ -155,7 +191,10 @@ class ContactQrAndroidTest {
                         }
                     }
                     assertSafeContentBounds(scenario)
-                    onView(withText("New chat")).perform(click())
+                    openChatOptions()
+                    listOf("Message requests (0)", "Chat security", "Disconnect").forEach(::assertMenuIcon)
+                    pressBack()
+                    onView(withContentDescription("New chat")).perform(click())
                     scan("Scan QR", ContactQr.encode(friend))
                     onView(withText("Chat with this device?")).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).perform(click())
@@ -165,35 +204,39 @@ class ContactQrAndroidTest {
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
                     val namedFriend = "Alex (${friend.take(8)})"
                     onView(withText(namedFriend)).check(matches(isDisplayed()))
+                    onView(withContentDescription("Chat verified")).check(matches(isDisplayed()))
+                    onView(withText("New messages use X3DH · contact ID verified")).check(doesNotExist())
                     scenario.recreate()
                     assertSafeContentBounds(scenario)
-                    onView(withText("ID & verify")).perform(click())
-                    scan("Verify friend's ID", ContactQr.encode(friend))
+                    onView(withContentDescription("Chat verified")).perform(click())
+                    onView(withText("Verify chat")).inRoot(isDialog()).check(matches(isDisplayed()))
+                    scan("Scan QR", ContactQr.encode(friend))
                     onView(withText("ID matches this chat")).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).perform(click())
-                    onView(withText("ID & verify")).perform(click())
+                    openChatOptions()
+                    listOf("Contact ID", "Verify friend's ID", "Rename chat", "Remove chat", "Block contact",
+                        "Restart secure session", "Chat security").forEach(::assertMenuIcon)
                     scan("Verify friend's ID", ContactQr.encode("c".repeat(64)))
                     onView(withText("ID does not match")).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).perform(click())
                     onView(withText(namedFriend)).check(matches(isDisplayed()))
-                    onView(withText("ID & verify")).perform(click())
+                    openChatOptions()
                     onView(withText("Contact ID")).perform(click())
                     onView(withText(friend)).inRoot(isDialog()).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
-                    onView(withText("ID & verify")).perform(click())
+                    openChatOptions()
                     scan("Verify friend's ID", profile.toJson().toString())
                     onView(withText("Cannot read user ID")).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).perform(click())
-                    onView(withText("ID & verify")).perform(click())
+                    openChatOptions()
                     scan("Verify friend's ID", ContactQr.encode(identity.userId))
                     onView(withText("This is your own ID")).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).perform(click())
-                    onView(withText("ID & verify")).perform(click())
-                    onView(withText("My ID")).perform(click())
+                    onView(withContentDescription("Back to chats")).perform(click())
+                    navigate("My ID")
                     onView(withContentDescription("Your Carriex user ID QR")).inRoot(isDialog()).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
-                    onView(withText("All chats")).perform(click())
-                    onView(withText("New chat")).perform(click())
+                    onView(withContentDescription("New chat")).perform(click())
                     onView(withText("Import text")).perform(click())
                     onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("invalid"), closeSoftKeyboard())
                     onView(withId(android.R.id.button1)).perform(click())
@@ -204,22 +247,34 @@ class ContactQrAndroidTest {
                     onView(withText("Name chat")).inRoot(isDialog()).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
                     onView(withText(imported.take(8))).check(matches(isDisplayed()))
-                    onView(withText("All chats")).perform(click())
+                    onView(withContentDescription("Chat not verified")).check(matches(isDisplayed()))
+                    onView(withContentDescription("Chat not verified")).perform(click())
+                    onView(withText("Verify chat")).inRoot(isDialog()).check(matches(isDisplayed()))
+                    onView(withText("Cancel")).inRoot(isDialog()).perform(click())
+                    onView(withContentDescription("Chat not verified")).check(matches(isDisplayed()))
+                    scenario.recreate()
+                    onView(withContentDescription("Chat not verified")).check(matches(isDisplayed()))
+                    onView(withContentDescription("Back to chats")).perform(click())
                     onView(withText(namedFriend)).check(matches(isDisplayed()))
                     onView(withText(imported.take(8))).perform(click())
                     onView(withText("Name chat")).check(doesNotExist())
-                    onView(withText("ID & verify")).perform(click())
+                    openChatOptions()
                     onView(withText("Rename chat")).perform(click())
                     onView(isAssignableFrom(TextInputEditText::class.java)).inRoot(isDialog())
                         .perform(replaceText("Dana"), closeSoftKeyboard())
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
                     onView(withText("Dana (${imported.take(8)})")).check(matches(isDisplayed()))
-                    onView(withText("ID & verify")).perform(click())
+                    openChatOptions()
                     onView(withText("Rename chat")).perform(click())
                     onView(isAssignableFrom(TextInputEditText::class.java)).inRoot(isDialog())
                         .perform(replaceText(""), closeSoftKeyboard())
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
                     onView(withText(imported.take(8))).check(matches(isDisplayed()))
+                    onView(withContentDescription("Chat not verified")).perform(click())
+                    scan("Scan QR", ContactQr.encode(imported))
+                    onView(withText("ID matches this chat")).inRoot(isDialog()).check(matches(isDisplayed()))
+                    onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                    onView(withContentDescription("Chat verified")).check(matches(isDisplayed()))
                     assertSafeContentBounds(scenario)
                     onView(isAssignableFrom(TextInputEditText::class.java)).perform(click(), replaceText("Keyboard spacing check"))
                     instrumentation.waitForIdleSync()
@@ -237,6 +292,7 @@ class ContactQrAndroidTest {
             } finally {
                 val editor = preferences.edit().remove("contacts_${profile.fingerprint}")
                 preferences.all.keys.filter { it.startsWith("contact_name_${profile.fingerprint}_") }.forEach(editor::remove)
+                preferences.all.keys.filter { it.startsWith("verified_id_${profile.fingerprint}_") }.forEach(editor::remove)
                 if (original == null) editor.remove("paired_servers_v1") else editor.putString("paired_servers_v1", original)
                 assertTrue(editor.commit())
             }

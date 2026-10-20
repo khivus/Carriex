@@ -8,7 +8,7 @@ object MessagePayload {
     data class Decoded(val content: ByteArray, val sentAt: Long?)
 
     fun encode(content: ByteArray, sentAt: Long?): ByteArray {
-        if (sentAt == null) return content
+        if (sentAt == null) return content.copyOf()
         require(sentAt > 0) { "Invalid message send time" }
         return ByteBuffer.allocate(prefix.size + 8 + content.size)
             .put(prefix).putLong(sentAt).put(content).array()
@@ -16,7 +16,7 @@ object MessagePayload {
 
     fun decode(bytes: ByteArray): Decoded {
         if (bytes.size < prefix.size || !prefix.indices.all { bytes[it] == prefix[it] })
-            return Decoded(bytes, null)
+            return Decoded(bytes.copyOf(), null)
         require(bytes.size >= prefix.size + 8) { "Incomplete message timestamp" }
         val sentAt = ByteBuffer.wrap(bytes, prefix.size, 8).long
         require(sentAt > 0) { "Invalid message send time" }

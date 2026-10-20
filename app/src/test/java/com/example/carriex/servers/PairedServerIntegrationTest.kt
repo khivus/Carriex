@@ -50,7 +50,8 @@ class PairedServerIntegrationTest {
             val pixels = image.javaClass.getMethod("getRGB", intType, intType, intType, intType,
                 IntArray::class.java, intType, intType).invoke(image, 0, 0, width, height, null, 0, width) as IntArray
             val bitmap = BinaryBitmap(HybridBinarizer(RGBLuminanceSource(width, height, pixels)))
-            val decoded = MultiFormatReader().decode(bitmap, mapOf(DecodeHintType.TRY_HARDER to true)).text
+            // The exact generated PNG has no camera perspective or surrounding scene.
+            val decoded = MultiFormatReader().decode(bitmap, mapOf(DecodeHintType.PURE_BARCODE to true)).text
             assertEquals(text, decoded)
             val fromQr = PairedServer.parse(decoded)
             val fromText = PairedServer.parse(text)

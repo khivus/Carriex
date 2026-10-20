@@ -40,6 +40,12 @@ class PairingAndroidTest {
         .put("type", "carriex-server").put("version", 1).put("name", "Pairing UI test")
         .put("url", url).put("certificate", cert.certificate.encoded.toByteString().base64()).toString()
 
+    private fun navigateAdd(action: String) {
+        onView(withContentDescription("Open navigation menu")).perform(click())
+        onView(withText("Add server")).perform(click())
+        onView(withText(action)).perform(click())
+    }
+
     @Test fun textImportSurvivesActivityAndViewModelRecreationThenCanBeForgotten() {
         val preferences = instrumentation.targetContext.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
         val original = preferences.getString("paired_servers_v1", null)
@@ -49,7 +55,7 @@ class PairingAndroidTest {
         try {
             assertTrue(preferences.edit().remove("paired_servers_v1").commit())
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                onView(withText("Import pairing text")).perform(click())
+                navigateAdd("Import pairing text")
                 onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText(text), closeSoftKeyboard())
                 onView(withId(android.R.id.button1)).perform(click())
                 onView(withText("Save server?")).check(matches(isDisplayed()))
@@ -62,9 +68,10 @@ class PairingAndroidTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 onView(withText("Pairing UI test")).check(matches(isDisplayed()))
                 assertEquals(1, ServerListStore({ preferences.getString("paired_servers_v1", null) }, { false }).list().size)
-                onView(withText("Forget")).perform(scrollTo(), click())
+                onView(withContentDescription("Options for Pairing UI test")).perform(scrollTo(), click())
+                onView(withText("Forget server")).perform(click())
                 onView(withId(android.R.id.button1)).perform(click())
-                onView(withText("No saved servers yet")).check(matches(isDisplayed()))
+                onView(withText("Your servers will appear here")).check(matches(isDisplayed()))
                 assertTrue(ServerListStore({ preferences.getString("paired_servers_v1", null) }, { false }).list().isEmpty())
             }
         } finally {
@@ -77,7 +84,7 @@ class PairingAndroidTest {
     @Test fun qrScannerIsEmbeddedAndCancellationReturnsToSavedServers() {
         instrumentation.uiAutomation.executeShellCommand("pm grant com.example.carriex android.permission.CAMERA").close()
         ActivityScenario.launch(MainActivity::class.java).use {
-            onView(withText("Scan server QR")).perform(click())
+            navigateAdd("Scan server QR")
             instrumentation.waitForIdleSync()
             instrumentation.runOnMainSync {
                 val scanner = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
@@ -85,7 +92,7 @@ class PairingAndroidTest {
                 assertEquals(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, scanner.requestedOrientation)
             }
             pressBack()
-            onView(withText("Saved servers")).check(matches(isDisplayed()))
+            onView(withText("Carriex - servers")).check(matches(isDisplayed()))
         }
     }
 

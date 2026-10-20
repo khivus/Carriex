@@ -6,6 +6,7 @@ add_library(
     carriex_jni
     SHARED
     native-lib.cpp
+    x3dh-native.cpp
 )
 add_library(sodium SHARED IMPORTED)
 

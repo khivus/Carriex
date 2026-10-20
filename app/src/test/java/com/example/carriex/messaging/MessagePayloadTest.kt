@@ -23,6 +23,20 @@ class MessagePayloadTest {
         assertArrayEquals(body, MessagePayload.encode(body, null))
     }
 
+    @Test fun clearingTemporaryBuffersNeverErasesCallerOwnedMessages() {
+        val body = "No timestamp, still durable".toByteArray()
+        val expected = body.copyOf()
+        val encoded = MessagePayload.encode(body, null)
+        encoded.fill(0)
+        assertArrayEquals(expected, body)
+        val temporary = expected.copyOf()
+        val decoded = MessagePayload.decode(temporary)
+        temporary.fill(0)
+        assertArrayEquals(expected, decoded.content)
+        decoded.content.fill(0)
+        assertArrayEquals(expected, body)
+    }
+
     @Test fun malformedTimestampIsRejected() {
         val encoded = MessagePayload.encode("message".toByteArray(), 1_700_000_000_123L)
         assertThrows(IllegalArgumentException::class.java) { MessagePayload.decode(encoded.copyOf(10)) }

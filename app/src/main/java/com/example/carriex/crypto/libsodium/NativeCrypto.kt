@@ -8,6 +8,10 @@ object NativeCrypto {
         System.loadLibrary("carriex_jni")
     }
 
+    external fun x25519(secret: ByteArray, publicKey: ByteArray): ByteArray?
+    external fun xeddsaSign(secret: ByteArray, message: ByteArray, random: ByteArray): ByteArray?
+    external fun ed25519Verify(publicKey: ByteArray, message: ByteArray, signature: ByteArray): Boolean
+
     external fun secretboxEasy(input: ByteArray, nonce: ByteArray, key: ByteArray): ByteArray
 
     external fun secretboxOpenEasy(input: ByteArray, nonce: ByteArray, key: ByteArray): ByteArray?

@@ -94,6 +94,7 @@ Java_com_example_carriex_crypto_libsodium_NativeCrypto_kxKeypair(
 
     env->SetByteArrayRegion(pub, 0, crypto_kx_PUBLICKEYBYTES, (jbyte*)pk);
     env->SetByteArrayRegion(sec, 0, crypto_kx_SECRETKEYBYTES, (jbyte*)sk);
+    sodium_memzero(sk, sizeof sk);
 
     jclass cls = env->FindClass("com/example/carriex/crypto/model/KeyPair");
     jmethodID ctor = env->GetMethodID(cls, "<init>", "([B[B)V");
@@ -261,6 +262,9 @@ Java_com_example_carriex_crypto_libsodium_NativeCrypto_aeadXchacha20poly1305Encr
         jbyteArray npub,
         jbyteArray k
 ) {
+    if (m == nullptr || npub == nullptr || k == nullptr ||
+        env->GetArrayLength(npub) != crypto_aead_xchacha20poly1305_ietf_NPUBBYTES ||
+        env->GetArrayLength(k) != crypto_aead_xchacha20poly1305_ietf_KEYBYTES) return nullptr;
     jsize mlen = env->GetArrayLength(m);
     jsize adlen = (ad != nullptr) ? env->GetArrayLength(ad) : 0;
 
@@ -284,6 +288,8 @@ Java_com_example_carriex_crypto_libsodium_NativeCrypto_aeadXchacha20poly1305Encr
     jbyteArray out = env->NewByteArray(clen);
     env->SetByteArrayRegion(out, 0, clen, (jbyte*)c_buf);
 
+    sodium_memzero(k_buf, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
+    sodium_memzero(m_buf, mlen);
     free(m_buf); if (ad_buf) free(ad_buf); free(npub_buf); free(k_buf); free(c_buf);
 
     return out;
@@ -299,6 +305,10 @@ Java_com_example_carriex_crypto_libsodium_NativeCrypto_aeadXchacha20poly1305Decr
         jbyteArray npub,
         jbyteArray k
 ) {
+    if (c == nullptr || npub == nullptr || k == nullptr ||
+        env->GetArrayLength(c) < crypto_aead_xchacha20poly1305_ietf_ABYTES ||
+        env->GetArrayLength(npub) != crypto_aead_xchacha20poly1305_ietf_NPUBBYTES ||
+        env->GetArrayLength(k) != crypto_aead_xchacha20poly1305_ietf_KEYBYTES) return nullptr;
     jsize clen = env->GetArrayLength(c);
     jsize adlen = (ad != nullptr) ? env->GetArrayLength(ad) : 0;
 
@@ -318,6 +328,7 @@ Java_com_example_carriex_crypto_libsodium_NativeCrypto_aeadXchacha20poly1305Decr
     unsigned char* m_buf = (unsigned char*) malloc(mlen);
 
     if (crypto_aead_xchacha20poly1305_ietf_decrypt(m_buf, &mlen, nullptr, c_buf, clen, ad_buf, adlen, npub_buf, k_buf) != 0) {
+        sodium_memzero(k_buf, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
         free(c_buf); if (ad_buf) free(ad_buf); free(npub_buf); free(k_buf); free(m_buf);
         return nullptr;
     }
@@ -325,6 +336,8 @@ Java_com_example_carriex_crypto_libsodium_NativeCrypto_aeadXchacha20poly1305Decr
     jbyteArray out = env->NewByteArray(mlen);
     env->SetByteArrayRegion(out, 0, mlen, (jbyte*)m_buf);
 
+    sodium_memzero(k_buf, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
+    sodium_memzero(m_buf, mlen);
     free(c_buf); if (ad_buf) free(ad_buf); free(npub_buf); free(k_buf); free(m_buf);
 
     return out;

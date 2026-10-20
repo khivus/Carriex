@@ -32,6 +32,11 @@ captures/
 
 # Kotlin
 *.kotlin_module
+.kotlin/
+
+# Python reference-vector tooling
+__pycache__/
+*.py[cod]
 
 # =========================
 # IntelliJ / Android Studio

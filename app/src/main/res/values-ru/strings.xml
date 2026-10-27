@@ -21,7 +21,7 @@
     <string name="ui_settings">"Настройки"</string>
     <string name="ui_connect_to_a_server_or_view_its_saved_messages_offline_more_settings_a">"Подключитесь к серверу или откройте сохранённые сообщения без подключения. Дополнительные настройки доступны в меню сервера."</string>
     <string name="ui_your_servers_will_appear_here">"Здесь появятся ваши серверы"</string>
-    <string name="ui_tap_at_the_bottom_right_to_add_a_server_scan_the_server_owner_s_pairin">"Нажмите + внизу справа, чтобы добавить сервер. Отсканируйте QR-код подключения, полученный от владельца сервера, или импортируйте текст подключения."</string>
+    <string name="ui_tap_at_the_bottom_right_to_add_a_server_scan_the_server_owner_s_pairin">"С помощью кнопок внизу отсканируйте QR-код сервера или вставьте текст подключения от его владельца."</string>
     <string name="ui_options_for">"Действия с сервером %1$s"</string>
     <string name="ui_unread_messages">"Непрочитанных сообщений: %1$d"</string>
     <string name="ui_connects_on_app_startup">"Подключение при запуске приложения"</string>
@@ -41,7 +41,7 @@
     <string name="ui_forget_03d5d8">"Забыть"</string>
     <string name="ui_add_server">"Добавить сервер"</string>
     <string name="ui_scan_server_qr">"Сканировать QR-код сервера"</string>
-    <string name="ui_import_pairing_text">"Импортировать текст подключения"</string>
+    <string name="ui_import_pairing_text">"Добавить сервер по тексту подключения"</string>
     <string name="ui_scan_the_pairing_qr_shown_by_your_carriex_server">"Отсканируйте QR-код подключения, показанный вашим сервером Carriex"</string>
     <string name="ui_choose_a_server">"Выберите сервер"</string>
     <string name="ui_back_to_chats">"Вернуться к чатам"</string>
@@ -69,7 +69,7 @@
     <string name="ui_leave_group">"Выйти из группы"</string>
     <string name="ui_this_chat_is_verified_scan_the_my_id_qr_directly_from_your_friend_s_ph">"Этот чат проверен. Чтобы повторить проверку, отсканируйте QR-код «Мой ID» непосредственно с телефона собеседника."</string>
     <string name="ui_this_chat_is_not_verified_scan_the_my_id_qr_directly_from_your_friend_">"Этот чат не проверен. Отсканируйте QR-код «Мой ID» непосредственно с телефона собеседника и убедитесь, что он соответствует этому чату."</string>
-    <string name="ui_scan_qr">"Сканировать QR-код"</string>
+    <string name="ui_scan_qr">"Сканировать QR-код контакта"</string>
     <string name="ui_delete_group_1d6345">"Удалить группу?"</string>
     <string name="ui_leave_group_cfcdb9">"Выйти из группы?"</string>
     <string name="ui_this_closes_the_group_for_everyone_admin_rights_cannot_be_transferred_">"Группа будет закрыта для всех. Права администратора нельзя передать. Сохранённая история останется на устройствах участников."</string>
@@ -223,7 +223,7 @@
     <string name="ui_tap_a_device_to_unblock">"Нажмите на устройство, чтобы разблокировать"</string>
     <string name="ui_you_will_be_the_permanent_admin_invite_people_from_the_group_s_menu_af">"Вы станете постоянным администратором. После создания группы приглашайте участников через её меню."</string>
     <string name="ui_group_name">"Название группы"</string>
-    <string name="ui_new_group">"Новая группа"</string>
+    <string name="ui_new_group">"Создать группу"</string>
     <string name="ui_create">"Создать"</string>
     <string name="ui_enter_a_group_name">"Введите название группы"</string>
     <string name="ui_the_new_name_will_be_visible_to_everyone_in_this_group">"Новое название будет видно всем участникам группы."</string>
@@ -295,7 +295,7 @@
     <string name="ui_sent_c9016a">"Отправлено: %1$s, %2$s"</string>
     <string name="ui_say_hello_to">"Напишите %1$s"</string>
     <string name="ui_close_new_chat_actions">"Закрыть действия создания чата"</string>
-    <string name="ui_import_text">"Импортировать текст"</string>
+    <string name="ui_import_text">"Добавить контакт по ID или тексту QR-кода"</string>
     <string name="ui_new_chat">"Новый чат"</string>
     <string name="ui_system_default">"Как в системе"</string>
     <string name="ui_white">"Светлая"</string>

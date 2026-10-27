@@ -21,7 +21,7 @@
     <string name="ui_settings">"Settings"</string>
     <string name="ui_connect_to_a_server_or_view_its_saved_messages_offline_more_settings_a">"Connect to a server, or view its saved messages offline. More settings are in its menu."</string>
     <string name="ui_your_servers_will_appear_here">"Your servers will appear here"</string>
-    <string name="ui_tap_at_the_bottom_right_to_add_a_server_scan_the_server_owner_s_pairin">"Tap + at the bottom right to add a server. Scan the server owner\'s pairing QR or import their pairing text."</string>
+    <string name="ui_tap_at_the_bottom_right_to_add_a_server_scan_the_server_owner_s_pairin">"Use the buttons below to scan the server pairing QR or paste the pairing text from its owner."</string>
     <string name="ui_options_for">"Options for %1$s"</string>
     <string name="ui_unread_messages">"%1$d unread messages"</string>
     <string name="ui_connects_on_app_startup">"Connects on app startup"</string>
@@ -40,8 +40,8 @@
     <string name="ui_this_removes_its_saved_address_and_trusted_key_saved_messages_stay_on_">"This removes its saved address and trusted key. Saved messages stay on this device. Pair again to reconnect."</string>
     <string name="ui_forget_03d5d8">"Forget"</string>
     <string name="ui_add_server">"Add server"</string>
-    <string name="ui_scan_server_qr">"Scan server QR"</string>
-    <string name="ui_import_pairing_text">"Import pairing text"</string>
+    <string name="ui_scan_server_qr">"Scan server pairing QR"</string>
+    <string name="ui_import_pairing_text">"Add server with pairing text"</string>
     <string name="ui_scan_the_pairing_qr_shown_by_your_carriex_server">"Scan the pairing QR shown by your Carriex server"</string>
     <string name="ui_choose_a_server">"Choose a server"</string>
     <string name="ui_back_to_chats">"Back to chats"</string>
@@ -69,7 +69,7 @@
     <string name="ui_leave_group">"Leave group"</string>
     <string name="ui_this_chat_is_verified_scan_the_my_id_qr_directly_from_your_friend_s_ph">"This chat is verified. Scan the My ID QR directly from your friend\'s phone to verify it again."</string>
     <string name="ui_this_chat_is_not_verified_scan_the_my_id_qr_directly_from_your_friend_">"This chat is not verified. Scan the My ID QR directly from your friend\'s phone and confirm that it matches this chat."</string>
-    <string name="ui_scan_qr">"Scan QR"</string>
+    <string name="ui_scan_qr">"Scan contact QR"</string>
     <string name="ui_delete_group_1d6345">"Delete group?"</string>
     <string name="ui_leave_group_cfcdb9">"Leave group?"</string>
     <string name="ui_this_closes_the_group_for_everyone_admin_rights_cannot_be_transferred_">"This closes the group for everyone. Admin rights cannot be transferred. Saved history stays on each device."</string>
@@ -223,7 +223,7 @@
     <string name="ui_tap_a_device_to_unblock">"Tap a device to unblock"</string>
     <string name="ui_you_will_be_the_permanent_admin_invite_people_from_the_group_s_menu_af">"You will be the permanent admin. Invite people from the group\'s menu after creating it."</string>
     <string name="ui_group_name">"Group name"</string>
-    <string name="ui_new_group">"New group"</string>
+    <string name="ui_new_group">"Create group"</string>
     <string name="ui_create">"Create"</string>
     <string name="ui_enter_a_group_name">"Enter a group name"</string>
     <string name="ui_the_new_name_will_be_visible_to_everyone_in_this_group">"The new name will be visible to everyone in this group."</string>
@@ -295,7 +295,7 @@
     <string name="ui_sent_c9016a">"Sent %1$s, %2$s"</string>
     <string name="ui_say_hello_to">"Say hello to %1$s"</string>
     <string name="ui_close_new_chat_actions">"Close new chat actions"</string>
-    <string name="ui_import_text">"Import text"</string>
+    <string name="ui_import_text">"Add contact by ID or QR text"</string>
     <string name="ui_new_chat">"New chat"</string>
     <string name="ui_system_default">"System default"</string>
     <string name="ui_white">"White"</string>

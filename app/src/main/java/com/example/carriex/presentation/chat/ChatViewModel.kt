@@ -109,6 +109,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun statusFor(server: PairedServer): ServerTransport.ConnectionStatus =
         if (activeServer?.url == server.url) connectionStatus else ServerTransport.ConnectionStatus.DISCONNECTED
 
+    fun navigationChats(server: PairedServer): List<com.example.carriex.messaging.ConversationSummary> {
+        val summary = com.example.carriex.messaging.ConversationSummary
+        return (chatsFor(server.fingerprint).conversations.map { (peer, messages) ->
+            com.example.carriex.messaging.ConversationSummary(peer, contactLabel(peer, server.fingerprint), summary.latest(messages))
+        } + groupsByServer[server.fingerprint].orEmpty().filter { userId !in it.state.invited }.map {
+            com.example.carriex.messaging.ConversationSummary("group:${it.state.id}", it.state.name, summary.latest(it.messages))
+        }).sortedWith(summary.order)
+    }
+
+    fun navigateTo(server: PairedServer, conversation: String? = null) {
+        viewSaved(server)
+        if(conversation?.startsWith("group:") == true) selectedGroup = conversation.removePrefix("group:")
+        else if(conversation != null) openChat(conversation)
+        if(activeServer?.url != server.url || (!connected && !connecting)) connect(server, navigate = false)
+        changed()
+    }
+
     fun unreadFor(server: PairedServer): Int = chatsByServer[server.fingerprint]?.unread?.values?.sum() ?: 0
 
     fun saveServer(server: PairedServer): Boolean {
@@ -185,6 +202,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         refreshServers()
+        savedServers.forEach(::loadSaved)
         savedServers.firstOrNull { it.url == autoConnectUrl }?.let(::connect)
     }
 

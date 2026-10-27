@@ -252,23 +252,7 @@ class ChatScreen : Fragment() {
             header.addView(label("Carriex", 28f).apply { setTypeface(typeface, Typeface.BOLD) })
             drawerStatus = label(getString(R.string.ui_private_messaging), 13f, true).also(header::addView)
             addHeaderView(header)
-            menu.add(1, 3, 0, getString(R.string.ui_my_id, model.userId.take(8))).setIcon(R.drawable.ic_nav_person)
-            menu.add(1, 1, 1, getString(R.string.ui_chats)).setIcon(R.drawable.ic_stat_message).isCheckable = true
-            menu.add(1, 2, 2, getString(R.string.ui_servers)).setIcon(R.drawable.ic_nav_servers).isCheckable = true
-            menu.setGroupCheckable(1, true, true)
-            menu.findItem(3).isCheckable = false
-            menu.add(2, 4, 3, getString(R.string.ui_settings)).setIcon(R.drawable.ic_nav_settings).isCheckable = true
-            setNavigationItemSelectedListener { item ->
-                pageActions.close(false)
-                drawer.closeDrawer(GravityCompat.START)
-                when(item.itemId) {
-                    1 -> { settingsVisible = false; requestsVisible = false; chooseChats() }
-                    2 -> { settingsVisible = false; requestsVisible = false; model.showServers() }
-                    3 -> showMyIdQr()
-                    4 -> { settingsVisible = true; settingsSection = null; requestsVisible = false; settingsBuilt = false; render() }
-                }
-                true
-            }
+
         }
         drawer = BackSwipeDrawerLayout(requireContext()).apply {
             // Swipe-back navigation is disabled until animated transitions are added.
@@ -353,9 +337,14 @@ class ChatScreen : Fragment() {
     private fun setup() {
         val content = column().apply { setPadding(0, 0, 0, dp(8)) }
         val scroll = ScrollView(requireContext()).apply { isFillViewport = true; clipToPadding = false; addView(content) }
-        scroll.setPadding(0, 0, 0, dp(88))
+        scroll.setPadding(0, 0, 0, dp(8))
         pageScroll = scroll
-        root.addView(scroll, LinearLayout.LayoutParams(-1, -1))
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(column().apply {
+            setPadding(0, dp(8), 0, 0)
+            addView(button(getString(R.string.ui_scan_server_qr)) { scanServer() })
+            addView(button(getString(R.string.ui_import_pairing_text)) { importPairingText() })
+        })
         content.addView(label(getString(R.string.ui_connect_to_a_server_or_view_its_saved_messages_offline_more_settings_a), 14f, true))
         model.error?.let { content.addView(label(UiErrors.text(requireContext(), it), 14f).apply { setTextColor(color(androidx.appcompat.R.attr.colorError)) }) }
         if (model.savedServers.isEmpty()) {
@@ -430,6 +419,13 @@ class ChatScreen : Fragment() {
         }
     }
 
+    private fun scanServer() {
+        scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            .setCaptureActivity(PortraitQrCaptureActivity::class.java)
+            .setPrompt(getString(R.string.ui_scan_the_pairing_qr_shown_by_your_carriex_server))
+            .setBeepEnabled(false).setOrientationLocked(true))
+    }
+
     private fun addServer() {
         MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_add_server))
             .setItems(arrayOf(getString(R.string.ui_scan_server_qr), getString(R.string.ui_import_pairing_text))) { _, choice ->
@@ -461,7 +457,7 @@ class ChatScreen : Fragment() {
         }
         pageActions.showMode(when {
             settingsVisible || requestsVisible || conversation -> PageActions.NONE
-            model.serversVisible -> PageActions.SERVERS
+            model.serversVisible -> PageActions.NONE
             else -> PageActions.CHATS
         })
         toolbar.title = when {
@@ -475,7 +471,7 @@ class ChatScreen : Fragment() {
         toolbar.contentDescription = toolbar.title
         val active = model.activeServer
         drawerStatus.text = if(active == null) getString(R.string.ui_private_messaging_nchoose_a_server_to_connect) else "${active.name}\n${UiErrors.text(requireContext(), model.connectionStatus.label)}"
-        navigation.setCheckedItem(when { settingsVisible -> 4; model.serversVisible -> 2; else -> 1 })
+        rebuildDrawer()
         val mode = when { settingsVisible || requestsVisible || model.serversVisible -> 0; model.selectedGroup != null -> 3; conversation -> 2; else -> 1 }
         if(toolbarMenuMode != mode) {
             toolbar.menu.clear()
@@ -497,6 +493,40 @@ class ChatScreen : Fragment() {
                 icon = menuIcon(if(verified) R.drawable.ic_shield_verified else R.drawable.ic_nav_shield).apply {
                     androidx.core.graphics.drawable.DrawableCompat.setTint(this,
                         if(verified) color(androidx.appcompat.R.attr.colorPrimary) else muted)
+                }
+            }
+        }
+    }
+
+    private fun rebuildDrawer() {
+        val menu = navigation.menu
+        menu.clear()
+        fun entry(group: Int, id: Int, title: String, icon: Int, selected: Boolean, action: () -> Unit) {
+            menu.add(group, id, menu.size(), title).apply {
+                setIcon(icon); isCheckable = true; isChecked = selected
+                setOnMenuItemClickListener {
+                    pageActions.close(false); drawer.closeDrawer(GravityCompat.START)
+                    action(); true
+                }
+            }
+        }
+        entry(1, 3, getString(R.string.ui_my_id, model.userId.take(8)), R.drawable.ic_nav_person, false) { showMyIdQr() }
+        entry(1, 4, getString(R.string.ui_settings), R.drawable.ic_nav_settings, settingsVisible) {
+            settingsVisible = true; settingsSection = null; requestsVisible = false; settingsBuilt = false; render()
+        }
+        entry(2, 2, getString(R.string.ui_servers), R.drawable.ic_nav_servers, !settingsVisible && model.serversVisible) {
+            settingsVisible = false; requestsVisible = false; model.showServers()
+        }
+        var id = 1000
+        model.savedServers.forEach { server ->
+            val current = !settingsVisible && !requestsVisible && !model.serversVisible && model.viewedServer?.url == server.url
+            entry(2, id++, server.name, R.drawable.ic_nav_servers, current && model.selectedConversation == null) {
+                settingsVisible = false; requestsVisible = false; model.navigateTo(server)
+            }
+            model.navigationChats(server).forEach { chat ->
+                entry(2, id++, "    ${chat.label}", if(chat.id.startsWith("group:")) R.drawable.ic_group else R.drawable.ic_stat_message,
+                    current && model.selectedConversation == chat.id) {
+                    settingsVisible = false; requestsVisible = false; model.navigateTo(server, chat.id)
                 }
             }
         }
@@ -1140,7 +1170,8 @@ class ChatScreen : Fragment() {
             list.addView(label(getString(R.string.ui_start_a_conversation), 24f))
             list.addView(label(getString(R.string.ui_tap_the_pencil_button_to_scan_a_friend_s_qr_or_import_their_id_both_de), 16f, true))
         }
-        model.groups.filter { model.userId !in it.state.invited }.sortedByDescending { it.messages.lastOrNull()?.sentAt ?: 0L }.forEach { conversation ->
+        val rows = linkedMapOf<String, View>()
+        model.groups.filter { model.userId !in it.state.invited }.forEach { conversation ->
             val group = conversation.state
             val row = column().apply {
                 setPadding(dp(10), dp(8), dp(10), dp(8))
@@ -1149,10 +1180,13 @@ class ChatScreen : Fragment() {
                 setOnClickListener { model.openGroup(group.id) }
                 isFocusable = true
             }
-            row.addView(label(group.name, 18f).apply {
-                setTypeface(typeface, Typeface.BOLD)
-                setCompoundDrawablesRelativeWithIntrinsicBounds(menuIcon(R.drawable.ic_group), null, null, null)
-                compoundDrawablePadding = dp(8)
+            row.addView(actionRow().apply {
+                addView(label(group.name, 18f).apply {
+                    setTypeface(typeface, Typeface.BOLD)
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(menuIcon(R.drawable.ic_group), null, null, null)
+                    compoundDrawablePadding = dp(8)
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                addMessageTime(this, com.example.carriex.messaging.ConversationSummary.latest(conversation.messages)?.sentAt)
             })
             if(model.userId in group.invited) {
                 row.addView(label(getString(R.string.ui_invited_you_to_this_group, model.contactLabel(group.admin)), 14f, true))
@@ -1166,12 +1200,12 @@ class ChatScreen : Fragment() {
                     model.userId !in group.members -> getString(R.string.ui_no_longer_a_member_saved_history)
                     else -> getString(R.string.ui_members, group.members.size) + if(group.admin == model.userId) getString(R.string.ui_you_are_the_admin) else ""
                 }, 13f, true))
-                conversation.messages.lastOrNull()?.let { latest -> row.addView(label(
+                com.example.carriex.messaging.ConversationSummary.latest(conversation.messages)?.let { latest -> row.addView(label(
                     (if(latest.from == model.userId) getString(R.string.ui_you) else "${model.contactLabel(latest.from)}: ") + String(latest.content, Charsets.UTF_8), 14f, true).apply {
                     maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                 }) }
             }
-            list.addView(row)
+            rows["group:${group.id}"] = row
         }
         val previews = model.conversations.map { (peer, messages) ->
             val latest = messages.maxByOrNull { it.sentAt ?: Long.MIN_VALUE }
@@ -1193,22 +1227,24 @@ class ChatScreen : Fragment() {
                     setTypeface(typeface, Typeface.BOLD)
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, -2, 1f))
-                latest?.sentAt?.let { sentAt ->
-                    val date = java.util.Date(sentAt)
-                    val time = android.text.format.DateFormat.getTimeFormat(requireContext()).format(date)
-                    val day = android.text.format.DateFormat.getDateFormat(requireContext()).format(date)
-                    val text = if (android.text.format.DateUtils.isToday(sentAt)) time else "$day, $time"
-                    addView(label(text, 12f, true).apply {
-                        setSingleLine(true)
-                        contentDescription = getString(R.string.ui_last_message_sent, day, time)
-                    }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
-                }
+                addMessageTime(this, latest?.sentAt)
             }, LinearLayout.LayoutParams(-1, -2))
             row.addView(label(latest?.let { (if (it.from == model.userId) getString(R.string.ui_you) else "") + String(it.content, Charsets.UTF_8) } ?: getString(R.string.ui_say_hello), 14f, true).apply {
                 maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
             })
-            list.addView(row)
+            rows[peer] = row
         }
+        model.viewedServer?.let { server -> model.navigationChats(server).forEach { summary -> rows[summary.id]?.let(list::addView) } }
+    }
+
+    private fun addMessageTime(row: LinearLayout, sentAt: Long?) {
+        if(sentAt == null) return
+        val date = java.util.Date(sentAt)
+        val time = android.text.format.DateFormat.getTimeFormat(requireContext()).format(date)
+        val day = android.text.format.DateFormat.getDateFormat(requireContext()).format(date)
+        row.addView(label(if(android.text.format.DateUtils.isToday(sentAt)) time else "$day, $time", 12f, true).apply {
+            setSingleLine(true); contentDescription = getString(R.string.ui_last_message_sent, day, time)
+        }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
     }
 
     private fun chatSecurity() {

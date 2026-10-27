@@ -122,6 +122,7 @@ class ChatScreen : Fragment() {
     private lateinit var toolbar: MaterialToolbar
     private lateinit var navigation: NavigationView
     private lateinit var drawerStatus: TextView
+    private var drawerSignature: List<Any?>? = null
     private lateinit var pageActions: PageActions
     private var toolbarMenuMode = -1
     private var setupBuiltStep = -1
@@ -133,6 +134,10 @@ class ChatScreen : Fragment() {
     private var settingsVisible = false
     private var settingsBuilt = false
     private var settingsSection: String? = null
+    private var membersVisible = false
+    private var membersSignature: String? = null
+    private var editingMember: String? = null
+    private val memberDrafts = mutableMapOf<String, String>()
     private var requestsVisible = false
     private var settingsStatus: TextView? = null
     private var pageScroll: ScrollView? = null
@@ -222,6 +227,7 @@ class ChatScreen : Fragment() {
         settingsSection = savedInstanceState?.getString("settings_section")
         privacyServer = savedInstanceState?.getString("privacy_server")
         requestsVisible = savedInstanceState?.getBoolean("requests_page") ?: false
+        membersVisible = savedInstanceState?.getBoolean("members_page") ?: false
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -233,9 +239,11 @@ class ChatScreen : Fragment() {
         outState.putString("settings_section", settingsSection)
         outState.putString("privacy_server", privacyServer)
         outState.putBoolean("requests_page", requestsVisible)
+        outState.putBoolean("members_page", membersVisible)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        drawerSignature = null
         setupBuiltStep = -1
         toolbarMenuMode = -1
         root = column().apply {
@@ -246,7 +254,8 @@ class ChatScreen : Fragment() {
             navigationIcon = DrawerArrowDrawable(context)
             navigationContentDescription = getString(R.string.ui_open_navigation_menu)
             setNavigationOnClickListener {
-                if(settingsVisible && settingsSection != null) { settingsSection = null; settingsBuilt = false; render() }
+                if(membersVisible) { membersVisible = false; membersSignature = null; render() }
+                else if(settingsVisible && settingsSection != null) { settingsSection = null; settingsBuilt = false; render() }
                 else if(requestsVisible) { requestsVisible = false; render() }
                 else if(!settingsVisible && !model.serversVisible && model.selectedConversation != null) model.showChats()
                 else { pageActions.close(false); drawer.openDrawer(GravityCompat.START) }
@@ -305,6 +314,7 @@ class ChatScreen : Fragment() {
 
     private fun goBack(): Boolean = when {
         needsSetup -> { if(setupPreferences.getInt("setup_step", 0) > 0) advanceSetup(-1); true }
+        membersVisible -> { membersVisible = false; membersSignature = null; render(); true }
         settingsVisible && settingsSection != null -> { settingsSection = null; settingsBuilt = false; render(); true }
         settingsVisible -> { settingsVisible = false; render(); true }
         requestsVisible -> { requestsVisible = false; render(); true }
@@ -346,6 +356,8 @@ class ChatScreen : Fragment() {
             settingsBuilt = false; messageList = null; renderedScope = null; pageScroll = null
         }
         if(requestsVisible) { root.removeAllViews(); requestsPage(); return }
+        if(membersVisible) { membersPage(); return }
+        membersSignature = null
         val scope = model.viewedServer?.fingerprint
         if (!model.serversVisible && model.selectedConversation != null && !renderedServers &&
             renderedPeer == model.selectedConversation && renderedScope == scope && messageList != null) {
@@ -559,24 +571,26 @@ class ChatScreen : Fragment() {
     }
 
     private fun updateNavigation() {
-        val conversation = !settingsVisible && !requestsVisible && !model.serversVisible && model.selectedConversation != null
-        val back = conversation || requestsVisible || (settingsVisible && settingsSection != null)
+        val conversation = !settingsVisible && !requestsVisible && !membersVisible && !model.serversVisible && model.selectedConversation != null
+        val back = conversation || requestsVisible || membersVisible || (settingsVisible && settingsSection != null)
         toolbar.navigationIcon = if(back) androidx.appcompat.content.res.AppCompatResources.getDrawable(requireContext(), R.drawable.ic_back)
             else DrawerArrowDrawable(requireContext())
         toolbar.setNavigationIconTint(ink)
         toolbar.navigationContentDescription = when {
+            membersVisible -> getString(R.string.ui_back_to_group)
             conversation || requestsVisible -> getString(R.string.ui_back_to_chats)
             back -> getString(R.string.ui_back_to_settings)
             else -> getString(R.string.ui_open_navigation_menu)
         }
         pageActions.showMode(when {
-            settingsVisible || requestsVisible || conversation -> PageActions.NONE
+            settingsVisible || requestsVisible || membersVisible || conversation -> PageActions.NONE
             model.serversVisible -> PageActions.NONE
             else -> PageActions.CHATS
         })
         toolbar.title = when {
             settingsVisible -> settingsSection?.let { sectionTitle(it) } ?: getString(R.string.ui_settings)
             requestsVisible -> getString(R.string.ui_requests)
+            membersVisible -> getString(R.string.ui_members_a37bc2, model.currentGroup?.state?.name.orEmpty())
             model.serversVisible -> getString(R.string.ui_carriex_servers)
             model.selectedGroup != null -> model.currentGroup?.state?.name ?: getString(R.string.ui_group)
             model.selectedPeer != null -> model.contactLabel(model.selectedPeer!!)
@@ -586,7 +600,7 @@ class ChatScreen : Fragment() {
         val active = model.activeServer
         drawerStatus.text = if(active == null) getString(R.string.ui_private_messaging_nchoose_a_server_to_connect) else "${active.name}\n${UiErrors.text(requireContext(), model.connectionStatus.label)}"
         rebuildDrawer()
-        val mode = when { settingsVisible || requestsVisible || model.serversVisible -> 0; model.selectedGroup != null -> 3; conversation -> 2; else -> 1 }
+        val mode = when { settingsVisible || requestsVisible || membersVisible || model.serversVisible -> 0; model.selectedGroup != null -> 3; conversation -> 2; else -> 1 }
         if(toolbarMenuMode != mode) {
             toolbar.menu.clear()
             if(conversation && model.selectedGroup == null) {
@@ -613,11 +627,15 @@ class ChatScreen : Fragment() {
     }
 
     private fun rebuildDrawer() {
+        val signature = listOf(settingsVisible, requestsVisible, model.serversVisible, model.viewedServer?.url, model.selectedConversation,
+            model.savedServers.map { server -> listOf(server.url, server.name, model.navigationChats(server).map { listOf(it.id, it.label) }) })
+        if(drawerSignature == signature) return
+        drawerSignature = signature
         val menu = navigation.menu
         menu.clear()
         fun entry(group: Int, id: Int, title: String, icon: Int, selected: Boolean, action: () -> Unit) {
             menu.add(group, id, menu.size(), title).apply {
-                setIcon(icon); isCheckable = true; isChecked = selected
+                setIcon(icon); isCheckable = id != 3; isChecked = selected
                 setOnMenuItemClickListener {
                     pageActions.close(false); drawer.closeDrawer(GravityCompat.START)
                     action(); true
@@ -626,21 +644,21 @@ class ChatScreen : Fragment() {
         }
         entry(1, 3, getString(R.string.ui_my_id, model.userId.take(8)), R.drawable.ic_nav_person, false) { showMyIdQr() }
         entry(1, 4, getString(R.string.ui_settings), R.drawable.ic_nav_settings, settingsVisible) {
-            settingsVisible = true; settingsSection = null; requestsVisible = false; settingsBuilt = false; render()
+            membersVisible = false; settingsVisible = true; settingsSection = null; requestsVisible = false; settingsBuilt = false; render()
         }
         entry(2, 2, getString(R.string.ui_servers), R.drawable.ic_nav_servers, !settingsVisible && model.serversVisible) {
-            settingsVisible = false; requestsVisible = false; model.showServers()
+            settingsVisible = false; requestsVisible = false; membersVisible = false; model.showServers()
         }
         var id = 1000
         model.savedServers.forEach { server ->
             val current = !settingsVisible && !requestsVisible && !model.serversVisible && model.viewedServer?.url == server.url
             entry(2, id++, server.name, R.drawable.ic_nav_servers, current && model.selectedConversation == null) {
-                settingsVisible = false; requestsVisible = false; model.navigateTo(server)
+                settingsVisible = false; requestsVisible = false; membersVisible = false; model.navigateTo(server)
             }
             model.navigationChats(server).forEach { chat ->
                 entry(2, id++, "    ${chat.label}", if(chat.id.startsWith("group:")) R.drawable.ic_group else R.drawable.ic_stat_message,
                     current && model.selectedConversation == chat.id) {
-                    settingsVisible = false; requestsVisible = false; model.navigateTo(server, chat.id)
+                    settingsVisible = false; requestsVisible = false; membersVisible = false; model.navigateTo(server, chat.id)
                 }
             }
         }
@@ -669,7 +687,7 @@ class ChatScreen : Fragment() {
                         add(Triple(305, getString(R.string.ui_rename_group), R.drawable.ic_nav_edit))
                         add(Triple(304, getString(R.string.ui_delete_group), R.drawable.ic_delete))
                     } else add(Triple(303, getString(R.string.ui_leave_group), R.drawable.ic_delete))
-                }
+                } else if(group != null) add(Triple(306, getString(R.string.ui_delete_history), R.drawable.ic_delete))
             }
             else -> return
         }
@@ -698,14 +716,26 @@ class ChatScreen : Fragment() {
             301 -> groupMembers()
             302 -> inviteGroupMember()
             305 -> renameGroup()
+            306 -> {
+                val group = model.currentGroup?.state ?: return false
+                MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_delete_history))
+                    .setMessage(getString(R.string.ui_delete_group_history_detail))
+                    .setNegativeButton(getString(R.string.ui_cancel), null)
+                    .setPositiveButton(getString(R.string.ui_delete)) { _, _ -> model.clearGroupHistory(group.id) }.show()
+            }
             303, 304 -> {
                 val group = model.currentGroup?.state ?: return false
+                val body = column().apply { setPadding(dp(16), dp(8), dp(16), dp(8)) }
+                body.addView(label(if(id == 304) getString(R.string.ui_this_closes_the_group_for_everyone_admin_rights_cannot_be_transferred_)
+                    else getString(R.string.ui_you_will_stop_receiving_messages_the_remaining_members_will_refresh_th), 14f, true))
+                val deleteHistory = MaterialCheckBox(requireContext()).apply { text = getString(R.string.ui_delete_history) }
+                body.addView(deleteHistory)
+                body.addView(label(getString(R.string.ui_leave_history_detail), 14f, true))
                 pairingDialog = MaterialAlertDialogBuilder(requireContext())
                     .setTitle(if(id == 304) getString(R.string.ui_delete_group_1d6345) else getString(R.string.ui_leave_group_cfcdb9))
-                    .setMessage(if(id == 304) getString(R.string.ui_this_closes_the_group_for_everyone_admin_rights_cannot_be_transferred_)
-                        else getString(R.string.ui_you_will_stop_receiving_messages_the_remaining_members_will_refresh_th))
+                    .setView(body)
                     .setNegativeButton(getString(R.string.ui_cancel), null).setPositiveButton(if(id == 304) getString(R.string.ui_delete) else getString(R.string.ui_leave)) { _, _ ->
-                        model.changeGroup(group.id, if(id == 304) "close" else "leave", if(id == 304) "" else model.userId)
+                        model.changeGroup(group.id, if(id == 304) "close" else "leave", if(id == 304) "" else model.userId, deleteHistory.isChecked)
                     }.show()
             }
             201 -> showRequests()
@@ -719,13 +749,22 @@ class ChatScreen : Fragment() {
                     103 -> nameChat(peer, opening = false)
                     104 -> {
                         val serverScope = model.viewedServer?.fingerprint ?: return false
+                        val body = column().apply { setPadding(dp(16), dp(8), dp(16), dp(8)) }
+                        body.addView(label(getString(R.string.ui_delete_chat_detail), 14f, true))
+                        val block = MaterialCheckBox(requireContext()).apply { text = getString(R.string.ui_block_contact) }
+                        val keys = MaterialCheckBox(requireContext()).apply { text = getString(R.string.ui_remove_peer_keys) }
+                        body.addView(block); body.addView(keys)
+                        body.addView(label(getString(R.string.ui_remove_keys_detail), 14f, true))
                         pairingDialog = MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_remove_chat_ec0359))
-                            .setMessage(getString(R.string.ui_remove_this_chat_its_saved_messages_and_draft_from_this_device_the_con))
-                            .setNegativeButton(getString(R.string.ui_cancel), null).setPositiveButton(getString(R.string.ui_remove)) { _, _ ->
-                                if(model.viewedServer?.fingerprint == serverScope) model.removeChat(peer)
+                            .setView(body).setNegativeButton(getString(R.string.ui_cancel), null)
+                            .setPositiveButton(getString(R.string.ui_remove)) { _, _ ->
+                                if(model.viewedServer?.fingerprint == serverScope) model.removeChat(peer, block.isChecked, keys.isChecked)
                             }.show()
                     }
-                    105 -> model.blockContact(peer)
+                    105 -> MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_block_contact))
+                        .setMessage(getString(R.string.ui_block_notice))
+                        .setPositiveButton(getString(R.string.ui_block_contact)) { _, _ -> model.blockContact(peer) }
+                        .setNegativeButton(getString(R.string.ui_cancel), null).show()
                     106 -> MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_restart_secure_session_5d5f6a))
                         .setMessage(getString(R.string.ui_use_this_if_messages_can_no_longer_be_decrypted_after_a_long_gap_your_))
                         .setPositiveButton(getString(R.string.ui_restart)) { _, _ -> model.restartSecureSession(peer) }
@@ -890,10 +929,12 @@ class ChatScreen : Fragment() {
                        changed: (Boolean) -> Unit = {}) {
         val prefs = NotificationPolling.preferences(requireContext())
         val card = settingCard(parent, title, detail)
-        card.addView(com.google.android.material.switchmaterial.SwitchMaterial(requireContext()).apply {
+        val control = com.google.android.material.switchmaterial.SwitchMaterial(requireContext()).apply {
             contentDescription = title; isChecked = prefs.getBoolean(key, default)
             setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean(key, checked).apply(); changed(checked) }
-        })
+        }
+        card.addView(control)
+        card.setOnClickListener { control.isChecked = !control.isChecked }
     }
 
     private fun sectionTitle(id: String): String = when(id) {
@@ -957,7 +998,8 @@ class ChatScreen : Fragment() {
                     settingCard(content, sectionTitle(title), detail).apply {
                         contentDescription = getString(R.string.ui_open_setting, sectionTitle(title))
                         isClickable = true; isFocusable = true
-                        addView(label("\u203a", 24f).apply { gravity = Gravity.END })
+                        (getChildAt(0) as TextView).setCompoundDrawablesRelativeWithIntrinsicBounds(null, null,
+                            menuIcon(R.drawable.ic_chevron_right), null)
                         setOnClickListener { settingsSection = title; settingsBuilt = false; render() }
                     }
                 }
@@ -1449,7 +1491,7 @@ class ChatScreen : Fragment() {
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 addMessageTime(this, latest?.sentAt)
             }, LinearLayout.LayoutParams(-1, -2))
-            row.addView(label(latest?.let { (if (it.from == model.userId) getString(R.string.ui_you) else "") + String(it.content, Charsets.UTF_8) } ?: getString(R.string.ui_say_hello), 14f, true).apply {
+            row.addView(label(latest?.let { (if(it.type != Message.MessageType.CHAT_EVENT && it.from == model.userId) getString(R.string.ui_you) else "") + messagePreview(it) } ?: getString(R.string.ui_say_hello), 14f, true).apply {
                 maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
             })
             rows[peer] = row
@@ -1548,46 +1590,58 @@ class ChatScreen : Fragment() {
     }
 
     private fun groupMembers() {
-        val group = model.currentGroup?.state ?: return
-        val people = group.members + group.invited
-        val admin = group.admin == model.userId && !group.closed
-        val entries = people.map { id -> model.contactLabel(id) + when {
-            id == group.admin -> getString(R.string.ui_admin)
-            id in group.invited -> getString(R.string.ui_invited)
-            else -> ""
-        } }.toTypedArray()
-        pairingDialog = MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_members_a37bc2, group.name))
-            .setItems(entries) { _, index ->
-                val peer = people[index]
-                val actions = mutableListOf(getString(R.string.ui_rename_member))
-                if(admin && peer != group.admin) actions.add(getString(R.string.ui_remove))
-                pairingDialog = MaterialAlertDialogBuilder(requireContext()).setTitle(model.contactLabel(peer))
-                    .setItems(actions.toTypedArray()) { _, action ->
-                        if(action == 0) renameGroupMember(peer)
-                        else pairingDialog = MaterialAlertDialogBuilder(requireContext())
-                    .setTitle(getString(R.string.ui_remove_62f82a, model.contactLabel(peer)))
-                    .setMessage(if(peer in group.invited) getString(R.string.ui_revoke_this_invitation) else getString(R.string.ui_remove_this_person_and_refresh_every_remaining_member_s_sender_key))
-                    .setPositiveButton(getString(R.string.ui_remove)) { _, _ -> model.changeGroup(group.id, "remove", peer) }
-                    .setNegativeButton(getString(R.string.ui_cancel), null).show()
-                    }.setNegativeButton(getString(R.string.ui_cancel), null).show()
-            }.setPositiveButton(getString(R.string.ui_done), null).show()
+        membersVisible = true; membersSignature = null; editingMember = null; memberDrafts.clear(); render()
     }
 
-    private fun renameGroupMember(peer: String) {
-        val body = column().apply { setPadding(dp(12), dp(6), dp(12), dp(4)) }
-        body.addView(label(getString(R.string.ui_this_name_is_saved_on_this_device_for_this_server), 14f, true))
-        val input = field(body, getString(R.string.ui_member_name_optional), model.contactName(peer).orEmpty()) { }.apply {
-            filters = arrayOf(android.text.InputFilter.LengthFilter(64))
-        }
-        val dialog = MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_rename_member)).setView(body)
-            .setPositiveButton(getString(R.string.ui_save), null).setNegativeButton(getString(R.string.ui_cancel), null).create()
-        dialog.setOnShowListener {
-            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                if(model.setContactName(peer, input.text.toString())) { dialog.dismiss(); groupMembers() }
-                else input.error = getString(R.string.ui_unable_to_save_member_name)
+    private fun membersPage() {
+        val group = model.currentGroup?.state
+        if(group == null) { membersVisible = false; membersSignature = null; render(); return }
+        val people = group.members + group.invited
+        val signature = "${model.viewedServer?.fingerprint}/${group.id}/${group.revision}/" + people.joinToString { model.contactLabel(it) }
+        if(membersSignature == signature) return
+        membersSignature = signature; root.removeAllViews(); messageList = null; renderedScope = null
+        val content = spacedList()
+        content.addView(label(getString(R.string.ui_local_member_names), 14f, true))
+        root.addView(ScrollView(requireContext()).apply { addView(content) }, LinearLayout.LayoutParams(-1, -1))
+        val admin = group.admin == model.userId && !group.closed
+        people.forEach { peer ->
+            val card = settingCard(content, model.contactLabel(peer), when {
+                peer == group.admin -> getString(R.string.ui_admin)
+                peer in group.invited -> getString(R.string.ui_invited)
+                else -> ""
+            })
+            card.addView(actionRow().apply {
+                addView(ImageButton(requireContext()).apply {
+                    setImageResource(R.drawable.ic_nav_edit); background = null
+                    imageTintList = android.content.res.ColorStateList.valueOf(ink)
+                    contentDescription = getString(R.string.ui_rename_member_action, model.contactLabel(peer))
+                    setOnClickListener { editingMember = peer; membersSignature = null; render() }
+                }, LinearLayout.LayoutParams(dp(48), dp(48)))
+                if(admin && peer != group.admin) addView(ImageButton(requireContext()).apply {
+                    setImageResource(R.drawable.ic_delete); background = null
+                    imageTintList = android.content.res.ColorStateList.valueOf(color(androidx.appcompat.R.attr.colorError))
+                    contentDescription = getString(R.string.ui_remove_member_action, model.contactLabel(peer))
+                    setOnClickListener {
+                        MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_remove_62f82a, model.contactLabel(peer)))
+                            .setMessage(if(peer in group.invited) getString(R.string.ui_revoke_this_invitation)
+                                else getString(R.string.ui_remove_this_person_and_refresh_every_remaining_member_s_sender_key))
+                            .setPositiveButton(getString(R.string.ui_remove)) { _, _ -> model.changeGroup(group.id, "remove", peer) }
+                            .setNegativeButton(getString(R.string.ui_cancel), null).show()
+                    }
+                }, LinearLayout.LayoutParams(dp(48), dp(48)))
+            })
+            if(editingMember == peer) {
+                val input = field(card, getString(R.string.ui_member_name_optional), memberDrafts[peer] ?: model.contactName(peer).orEmpty()) { memberDrafts[peer] = it }
+                input.filters = arrayOf(android.text.InputFilter.LengthFilter(64))
+                card.addView(actionRow().apply {
+                    addAction(getString(R.string.ui_save)) {
+                        if(model.setContactName(peer, input.text.toString())) { editingMember = null; membersSignature = null; render() }
+                        else input.error = getString(R.string.ui_unable_to_save_member_name)
+                    }
+                    addAction(getString(R.string.ui_cancel)) { editingMember = null; membersSignature = null; render() }
+                })
             }
         }
-        pairingDialog = dialog; dialog.show()
     }
 
     private fun showRequests() {
@@ -1735,8 +1789,8 @@ class ChatScreen : Fragment() {
     }
 
     private fun messageRow(message: Message): MessageViews {
-        if(message.type == Message.MessageType.GROUP_EVENT) {
-            val text = label(groupEventText(message), 12f, true).apply {
+        if(message.type == Message.MessageType.GROUP_EVENT || message.type == Message.MessageType.CHAT_EVENT) {
+            val text = label(if(message.type == Message.MessageType.CHAT_EVENT) chatEventText(message) else groupEventText(message), 12f, true).apply {
                 gravity = Gravity.CENTER; setPadding(dp(12), dp(8), dp(12), dp(8))
                 layoutParams = LinearLayout.LayoutParams(-1, -2)
             }
@@ -1785,6 +1839,27 @@ class ChatScreen : Fragment() {
         return MessageViews(row, body, status, time, footer, sender, bubble)
     }
 
+    private fun chatEventText(message: Message): String {
+        val kind = String(message.content, Charsets.UTF_8)
+        if(message.from == model.userId) return getString(when(kind) {
+            "history_deleted" -> R.string.ui_event_own_history_deleted
+            "blocked" -> R.string.ui_event_own_blocked
+            "keys_removed" -> R.string.ui_event_own_keys_removed
+            else -> R.string.ui_event_own_restarted
+        })
+        val actor = model.contactLabel(message.from)
+        return getString(when(kind) {
+            "history_deleted" -> R.string.ui_event_history_deleted
+            "blocked" -> R.string.ui_event_blocked
+            "keys_removed" -> R.string.ui_event_keys_removed
+            else -> R.string.ui_event_restarted
+        }, actor)
+    }
+
+    private fun messagePreview(message: Message): String = if(message.type == Message.MessageType.CHAT_EVENT)
+        com.example.carriex.messaging.ContactAction.timeline(message).joinToString("\n", transform = ::chatEventText)
+        else String(message.content, Charsets.UTF_8)
+
     private fun groupEventText(message: Message): String {
         val event = org.json.JSONObject(String(message.content, Charsets.UTF_8))
         fun person(id: String, subject: Boolean = false) = if(id == model.userId) (if(subject) getString(R.string.ui_you_905cb3) else getString(R.string.ui_you_8af56d)) else model.contactLabel(id)
@@ -1823,7 +1898,8 @@ class ChatScreen : Fragment() {
     }
 
     private fun conversationStatus(): String {
-        val group = model.currentGroup ?: return connectionText()
+        val group = model.currentGroup ?: return if(model.selectedPeer?.let(model::contactActionPending) == true)
+            getString(R.string.ui_contact_action_pending) else connectionText()
         return when {
             model.groupProgress(group.state.id) != null -> UiErrors.text(requireContext(), model.groupProgress(group.state.id))
             group.joining -> getString(R.string.ui_joining_group_waiting_for_admin_security_confirmation)
@@ -1857,7 +1933,7 @@ class ChatScreen : Fragment() {
                 (group.state.members + group.messages.filter { it.type != Message.MessageType.GROUP_EVENT }.map { it.from })
                     .filter { it != model.userId }, ownBubbleColor)
         } else emptyMap()
-        sendButton?.isEnabled = model.viewingConnectedServer && (model.selectedGroup == null ||
+        sendButton?.isEnabled = model.viewingConnectedServer && (model.selectedPeer == null || (model.selectedPeer !in model.blockedContacts() && !model.contactActionPending(model.selectedPeer!!))) && (model.selectedGroup == null ||
             (group != null && group.ready && !group.joining && !model.groupSending && model.groupProgress(group.state.id) == null &&
                 !group.state.closed && model.userId in group.state.members))
         sendButton?.text = if(model.groupSending) getString(R.string.ui_sending) else getString(R.string.ui_send)
@@ -1869,7 +1945,8 @@ class ChatScreen : Fragment() {
                 input.setSelection(draft.length)
             }
         }
-        val messages = if(model.selectedGroup != null) group?.let(::groupTimeline).orEmpty() else model.conversations[peer].orEmpty()
+        val messages = if(model.selectedGroup != null) group?.let(::groupTimeline).orEmpty()
+            else model.conversations[peer].orEmpty().flatMap(com.example.carriex.messaging.ContactAction::timeline)
         val ids = messages.mapTo(hashSetOf()) { it.id }
         messageViews.keys.filter { it !in ids }.forEach { id -> list.removeView(messageViews.remove(id)!!.row) }
         if (messageViews.isEmpty()) list.removeAllViews()
@@ -1878,8 +1955,8 @@ class ChatScreen : Fragment() {
                 messageRow(message).also { list.addView(it.row) }
             }
             if(list.indexOfChild(views.row) != index) { list.removeView(views.row); list.addView(views.row, index) }
-            if(message.type == Message.MessageType.GROUP_EVENT) {
-                views.body.text = groupEventText(message)
+            if(message.type == Message.MessageType.GROUP_EVENT || message.type == Message.MessageType.CHAT_EVENT) {
+                views.body.text = if(message.type == Message.MessageType.CHAT_EVENT) chatEventText(message) else groupEventText(message)
                 return@forEachIndexed
             }
             val fill = if(message.from == model.userId) ownBubbleColor else groupBubbleColors[message.from] ?: incomingBubbleColor
@@ -1930,7 +2007,7 @@ class ChatScreen : Fragment() {
         composer = null
         messageScroll = null; messageList = null; connectionLabel = null; errorLabel = null; sendButton = null; conversationTitle = null
         messageViews.clear()
-        settingsBuilt = false; settingsStatus = null; pageScroll = null; setupBuiltStep = -1; batteryStatus = null; permissionStatus = null
+        settingsBuilt = false; settingsStatus = null; pageScroll = null; membersSignature = null; setupBuiltStep = -1; batteryStatus = null; permissionStatus = null
         super.onDestroyView()
     }
 

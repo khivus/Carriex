@@ -93,6 +93,8 @@ class ServerConnectionAndroidTest {
         @Volatile var holdHealth: CountDownLatch? = null
         @Volatile var socket: WebSocket? = null
         @Volatile var sentFrame: JSONObject? = null
+        val sentFrames = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
+        @Volatile var sendCode = 404
         val groupEvents = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
         val groupMessages = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
         @Volatile var holdGroupListing: Pair<CountDownLatch, CountDownLatch>? = null
@@ -226,7 +228,8 @@ class ServerConnectionAndroidTest {
                     request.path == "/prekeys/${friend.userId}/claim" -> json(claim(peerBundle).toString())
                     request.path == "/send" -> {
                         sentFrame = JSONObject(request.body.readUtf8())
-                        MockResponse().setResponseCode(404)
+                        sentFrames.add(sentFrame!!)
+                        json("{\"status\":\"ok\"}").setResponseCode(sendCode)
                     }
                     request.path?.startsWith("/ws/") == true -> {
                         socketCount.incrementAndGet()
@@ -272,8 +275,17 @@ class ServerConnectionAndroidTest {
     }
 
     private fun navigate(title: String) {
-        onView(withContentDescription("Open navigation menu")).perform(click())
-        onView(withText(title)).perform(click())
+        var destination = title
+        onView(isAssignableFrom(BackSwipeDrawerLayout::class.java)).perform(object : androidx.test.espresso.ViewAction {
+            override fun getDescription() = "Open the navigation drawer"
+            override fun getConstraints(): org.hamcrest.Matcher<android.view.View> = isAssignableFrom(BackSwipeDrawerLayout::class.java)
+            override fun perform(controller: androidx.test.espresso.UiController, view: android.view.View) {
+                if(title == "Chats") destination = ViewModelProvider(view.context as androidx.fragment.app.FragmentActivity)[ChatViewModel::class.java].viewedServer!!.name
+                (view as BackSwipeDrawerLayout).openDrawer(androidx.core.view.GravityCompat.START)
+                controller.loopMainThreadUntilIdle()
+            }
+        })
+        onView(allOf(withText(destination), isDescendantOfA(isAssignableFrom(com.google.android.material.navigation.NavigationView::class.java)))).perform(click())
     }
 
     private fun serverOption(server: PairedServer, option: String) {
@@ -380,7 +392,7 @@ class ServerConnectionAndroidTest {
                 assertFalse(model.conversations.containsKey(liveFriend))
                 model.showServers()
             }
-            onView(withText(first.pairing.name)).perform(scrollTo(), click())
+            onView(allOf(withText(first.pairing.name), isDisplayed())).perform(scrollTo(), click())
             instrumentation.runOnMainSync {
                 assertTrue(model.viewingConnectedServer)
                 assertFalse(model.conversations.containsKey(friend))
@@ -391,8 +403,9 @@ class ServerConnectionAndroidTest {
                 val legacy = model.conversations[liveFriend]!!.single { String(it.content) == "Arrived while browsing another server's history" }
                 assertNull("Legacy incoming messages have no send time", legacy.sentAt)
             }
-            // Android Back from Chats also opens Servers without a dialog or disconnect.
+            // Back opens the drawer; select Servers without disconnecting.
             pressBack()
+            onView(allOf(withText("Servers"), isDescendantOfA(isAssignableFrom(com.google.android.material.navigation.NavigationView::class.java)))).perform(click())
             onView(withText("Carriex - servers")).check(matches(isDisplayed()))
             assertEquals(1L, first.closed.count)
             assertEquals(1, first.socketCount.get())
@@ -673,7 +686,9 @@ class ServerConnectionAndroidTest {
             onView(isAssignableFrom(BackSwipeDrawerLayout::class.java)).perform(swipeLeft(), swipeUp())
             instrumentation.runOnMainSync { assertEquals(friend, model.selectedPeer) }
             onView(isAssignableFrom(BackSwipeDrawerLayout::class.java)).perform(swipeRight())
-            awaitState("swipe from message to chats") { model.selectedPeer == null && !model.serversVisible }
+            pressBack()
+            onView(withContentDescription("Back to chats")).perform(click())
+            awaitState("back from message to chats") { model.selectedPeer == null && !model.serversVisible }
             instrumentation.runOnMainSync {
                 for(index in 100..120) model.openChat("%064x".format(index))
                 model.showChats()
@@ -684,7 +699,8 @@ class ServerConnectionAndroidTest {
                 assertFalse("Vertical scrolling stays in chats", model.serversVisible)
             }
             onView(isAssignableFrom(BackSwipeDrawerLayout::class.java)).perform(swipeRight())
-            awaitState("swipe from chats to servers") { model.serversVisible }
+            onView(allOf(withText("Servers"), isDescendantOfA(isAssignableFrom(com.google.android.material.navigation.NavigationView::class.java)))).perform(click())
+            awaitState("drawer servers selection") { model.serversVisible }
             onView(withContentDescription("Disconnect from ${first.pairing.name}")).check(matches(isDisplayed()))
             onView(withContentDescription(open)).check(matches(isDisplayed()))
             onView(withContentDescription("Options for ${first.pairing.name}")).perform(click())
@@ -721,7 +737,7 @@ class ServerConnectionAndroidTest {
                     (byteArrayOf(Message.MessageType.DATA.ordinal.toByte()) + incoming.content).joinToString("") { "%02x".format(it) })).toString())
             awaitState("background message alert") {
                 instrumentation.targetContext.getSystemService(NotificationManager::class.java).activeNotifications.any {
-                    it.tag == "live:${first.pairing.fingerprint}" && it.id == 2
+                    it.tag == "live:${first.pairing.fingerprint}" && it.id == NotificationPolling.LIVE_MESSAGE_ID
                 }
             }
             instrumentation.runOnMainSync {
@@ -758,6 +774,115 @@ class ServerConnectionAndroidTest {
             assertFalse(model.connected)
             onView(withText("Server 0.6.0 · Incompatible")).check(matches(isDisplayed()))
             onView(withText("Ask the server owner to update the server or confirm which app version it supports.")).check(matches(isDisplayed()))
+        }
+    }
+
+    @Test fun deletingChatNotifiesPeerBeforeErasureAndRetriesTheSameEncryptedEvent() = withSavedServers { first, _, store ->
+        store.setAutoConnect(first.pairing.url)
+        first.sendCode = 503
+        val peer = first.friend.userId
+        val scope = first.pairing.fingerprint
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val model = model(scenario)
+            awaitState("connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.prekeysPublished }
+            scenario.onActivity {
+                model.openChat(peer)
+                model.drafts[peer] = "saved draft"
+                model.markContactVerified(peer)
+                model.removeChat(peer, block = true, removeKeys = true)
+            }
+            awaitState("event reached server but was rejected") { first.sentFrames.isNotEmpty() }
+            scenario.onActivity {
+                assertTrue(model.conversations.containsKey(peer))
+                assertTrue(model.contactVerified(peer))
+                assertFalse(peer in model.blockedContacts())
+            }
+            val original = first.sentFrames.first()
+            val event = first.decryptFromClient(original)
+            assertEquals(Message.MessageType.CHAT_EVENT, event.type)
+            val action = com.example.carriex.messaging.ContactAction.parse(event.content)
+            assertTrue(action.deleteHistory && action.block && action.removeKeys)
+            first.sendCode = 201
+            scenario.onActivity { model.removeChat(peer, block = true, removeKeys = true) }
+            awaitState("accepted event applied deletion") { !model.conversations.containsKey(peer) && peer in model.blockedContacts() }
+            assertTrue(first.sentFrames.size >= 2)
+            assertEquals(original.getString("id"), first.sentFrames.last().getString("id"))
+            assertEquals(original.getString("ciphertext"), first.sentFrames.last().getString("ciphertext"))
+            ChatStore(instrumentation.targetContext).use { db ->
+                assertTrue(db.history(scope).isEmpty())
+                assertTrue(db.contactActions(scope).isEmpty())
+                assertNull(db.x3dh(scope).get("peer/$peer"))
+                assertTrue(db.x3dh(scope).keys("session/").isEmpty())
+            }
+            scenario.onActivity { assertFalse(model.contactVerified(peer)); assertFalse(model.drafts.containsKey(peer)) }
+        }
+    }
+
+    @Test fun secureSessionRestartProducesLocalAndPeerSystemNotices() = withSavedServers { first, _, store ->
+        first.sendCode = 201
+        store.setAutoConnect(first.pairing.url)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val model = model(scenario)
+            awaitState("connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.prekeysPublished }
+            scenario.onActivity { model.openChat(first.friend.userId); model.restartSecureSession(first.friend.userId) }
+            awaitState("restart notice committed") { model.conversations[first.friend.userId]?.any { it.type == Message.MessageType.CHAT_EVENT } == true }
+            val event = first.decryptFromClient(first.sentFrames.last())
+            assertTrue(com.example.carriex.messaging.ContactAction.parse(event.content).restart)
+            onView(withText("You restarted the secure session.")).check(matches(isDisplayed()))
+        }
+    }
+
+    @Test fun aRecipientBlockingNoticesCannotPreventLocalHistoryAndKeyDeletion() = withSavedServers { first, _, store ->
+        first.sendCode = 409
+        store.setAutoConnect(first.pairing.url)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val model = model(scenario)
+            awaitState("connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.prekeysPublished }
+            scenario.onActivity { model.openChat(first.friend.userId); model.removeChat(first.friend.userId, removeKeys = true) }
+            awaitState("local deletion after permanent refusal") {
+                !model.conversations.containsKey(first.friend.userId) && model.error?.contains("server rejected its notice") == true
+            }
+            ChatStore(instrumentation.targetContext).use { db ->
+                assertTrue(db.history(first.pairing.fingerprint).isEmpty())
+                assertTrue(db.x3dh(first.pairing.fingerprint).keys("session/").isEmpty())
+            }
+        }
+    }
+
+    @Test fun membersPageRenamesInlineConfirmsRemovalAndClearsHistoryAfterClosing() = withSavedServers { first, _, store ->
+        store.setAutoConnect(first.pairing.url)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val model = model(scenario)
+            awaitState("connection") { model.connectionStatus == ConnectionStatus.CONNECTED }
+            scenario.onActivity { model.createGroup("Member controls") }
+            awaitState("ready group") { model.currentGroup?.ready == true }
+            val id = model.selectedGroup!!
+            scenario.onActivity { model.changeGroup(id, "invite", first.friend.userId) }
+            awaitState("invited") { model.currentGroup?.state?.invited?.contains(first.friend.userId) == true }
+            onView(withContentDescription("More options")).perform(click())
+            onView(withText("Group members")).perform(click())
+            onView(withContentDescription("Rename ${first.friend.userId.take(8)}")).perform(click())
+            onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("Teammate"), closeSoftKeyboard())
+            onView(withText("Save")).perform(click())
+            awaitState("name saved") { model.contactName(first.friend.userId) == "Teammate" }
+            onView(withContentDescription("Remove ${model.contactLabel(first.friend.userId)}")).perform(click())
+            onView(withText("Cancel")).perform(click())
+            assertTrue(first.friend.userId in model.currentGroup!!.state.invited)
+            onView(withContentDescription("Remove ${model.contactLabel(first.friend.userId)}")).perform(click())
+            onView(withText("Remove")).perform(click())
+            awaitState("invitation revoked") { model.currentGroup?.state?.invited?.isEmpty() == true }
+            onView(withContentDescription("Back to group")).perform(click())
+            scenario.onActivity { model.send("History before closing") }
+            awaitState("saved group message") { model.currentGroup?.messages?.isNotEmpty() == true }
+            onView(withContentDescription("More options")).perform(click())
+            onView(withText("Delete group")).perform(click())
+            onView(withText("Delete saved history")).perform(click())
+            onView(withText("Delete")).perform(click())
+            awaitState("closed with history erased") { model.currentGroup?.let { it.state.closed && it.messages.isEmpty() && it.events.isEmpty() } == true }
+            scenario.recreate()
+            awaitState("empty group history survives recreation") { model.currentGroup?.let { it.state.closed && it.messages.isEmpty() && it.events.isEmpty() } == true }
+            onView(withContentDescription("More options")).perform(click())
+            onView(withText("Delete saved history")).check(matches(isDisplayed()))
         }
     }
 
@@ -874,17 +999,14 @@ class ServerConnectionAndroidTest {
             val model = model(scenario)
             awaitState("group-capable connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.socket != null }
             onView(withContentDescription("New chat")).perform(click())
-            onView(withText("New group")).perform(click())
+            onView(withText("Create group")).perform(click())
             onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("Practice team"), closeSoftKeyboard())
             onView(withText("Create")).perform(click())
             awaitState("group created and opened") { model.currentGroup?.let { it.state.name == "Practice team" && it.ready } == true }
             onView(withText("Practice team")).check(matches(isDisplayed()))
             onView(withContentDescription("More options")).perform(click())
             onView(withText("Invite person")).perform(click())
-            // The real camera backgrounds MainActivity. Hold its return connection
-            // so the QR confirmation must survive until the group is ready again.
-            val reconnect = CountDownLatch(1)
-            first.holdHealth = reconnect
+            // Camera round trips retain the authenticated connection.
             instrumentation.runOnMainSync { model.onBackground(); model.onForeground() }
             val scanResult = android.content.Intent().putExtra("SCAN_RESULT", com.example.carriex.auth.ContactQr.encode(first.friend.userId))
                 .putExtra("SCAN_RESULT_FORMAT", "QR_CODE")
@@ -894,25 +1016,21 @@ class ServerConnectionAndroidTest {
                 onView(withText("Scan QR code")).perform(click())
                 instrumentation.waitForIdleSync()
                 assertEquals(1, monitor.hits)
-                onView(withText("Joining group…")).check(matches(org.hamcrest.Matchers.not(isEnabled())))
-            } finally {
-                instrumentation.removeMonitor(monitor)
-                first.holdHealth = null; reconnect.countDown()
-            }
+                onView(withText("Invite")).check(matches(isEnabled()))
+            } finally { instrumentation.removeMonitor(monitor) }
             onView(withText("Invite to Practice team?")).check(matches(isDisplayed()))
             awaitState("group connection restored after scanning") { model.viewingConnectedServer && model.currentGroup?.ready == true }
             onView(withText("Invite")).perform(click())
             awaitState("invitation published") { model.currentGroup?.state?.invited?.contains(first.friend.userId) == true }
             onView(withContentDescription("More options")).perform(click())
             onView(withText("Group members")).perform(click())
-            onView(withText("${first.friend.userId.take(8)} · Invited")).perform(click())
-            onView(withText("Rename member")).perform(click())
+            onView(withContentDescription("Rename ${first.friend.userId.take(8)}")).perform(click())
             onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("Alex"), closeSoftKeyboard())
             onView(withText("Save")).perform(click())
-            onView(withText("Alex (${first.friend.userId.take(8)}) · Invited")).perform(click())
-            onView(withText("Remove")).perform(click())
+            onView(withContentDescription("Remove Alex (${first.friend.userId.take(8)})")).perform(click())
             onView(withText("Remove")).perform(click())
             awaitState("admin revoked invitation") { model.currentGroup?.state?.invited?.isEmpty() == true }
+            onView(withContentDescription("Back to group")).perform(click())
             onView(withContentDescription("More options")).perform(click())
             onView(withText("Transfer admin")).check(doesNotExist())
             onView(withText("Leave group")).check(doesNotExist())
@@ -1015,12 +1133,11 @@ class ServerConnectionAndroidTest {
             instrumentation.runOnMainSync { model.openGroup(created.id) }
             onView(withContentDescription("More options")).perform(click())
             onView(withText("Group members")).perform(click())
-            onView(withText("${first.friend.userId.take(8)} · Admin")).perform(click())
-            onView(withText("Rename member")).perform(click())
+            onView(withContentDescription("Rename ${first.friend.userId.take(8)}")).perform(click())
             val name = "Alexandra Catherine Montgomery from the research team"
             onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText(name), closeSoftKeyboard())
             onView(withText("Save")).perform(click())
-            onView(withText("Done")).perform(click())
+            onView(withContentDescription("Back to group")).perform(click())
             fun checkName() {
                 onView(withText("$name (${first.friend.userId.take(8)})")).check(matches(isDisplayed()))
                 scenario.onActivity { activity ->
@@ -1054,6 +1171,7 @@ class ServerConnectionAndroidTest {
             val model = model(scenario)
             awaitState("personal invitation loaded") { model.groups.any { model.userId in it.state.invited } }
             assertTrue(model.groups.single().events.isEmpty())
+            onView(withText("Requests (0 messages, 1 groups)")).perform(click())
             onView(withText("Decline")).perform(click())
             awaitState("declined without replaying hidden events") { model.groups.singleOrNull()?.state?.json?.getString("action") == "decline" }
             assertTrue(model.groups.single().events.isEmpty())
@@ -1154,7 +1272,7 @@ class ServerConnectionAndroidTest {
                 val before = first.ackCount.get()
                 send(first.encryptFromFriend("Blocked message", System.currentTimeMillis()))
                 awaitState("blocked arrival retired") { first.ackCount.get() > before }
-                assertEquals(1, model.conversations[first.friend.userId]!!.size)
+                assertEquals(1, model.conversations[first.friend.userId]!!.count { it.type == Message.MessageType.DATA })
                 assertTrue(model.messageRequests().isEmpty())
             }
         } finally {
@@ -1243,7 +1361,7 @@ class ServerConnectionAndroidTest {
                 onView(withText("Save")).perform(click())
                 onView(withText("Different colors for group senders")).perform(scrollTo(), click())
                 scenario.recreate()
-                onView(withText("Different colors for group senders")).perform(scrollTo()).check(matches(isChecked()))
+                onView(withContentDescription("Different colors for group senders")).perform(scrollTo()).check(matches(isChecked()))
                 assertEquals("#EF6C00", preferences.getString(ownKey, null))
                 assertEquals("#F7E9A8", preferences.getString(incomingKey, null))
                 captureNavigation("appearance-message-bubbles")
@@ -1285,8 +1403,8 @@ class ServerConnectionAndroidTest {
                 onView(withContentDescription("Open navigation menu")).perform(click())
                 scenario.onActivity { activity ->
                     val nav = descendants(activity.window.decorView).filterIsInstance<com.google.android.material.navigation.NavigationView>().single()
-                    assertEquals(listOf("My ID (${AndroidDeviceIdentity.load().userId.take(8)})", "Chats", "Servers", "Settings"),
-                        (0 until nav.menu.size()).map { nav.menu.getItem(it).title.toString() })
+                    assertEquals(listOf("My ID (${AndroidDeviceIdentity.load().userId.take(8)})", "Settings", "Servers"),
+                        (0 until 3).map { nav.menu.getItem(it).title.toString() })
                 }
                 onView(allOf(withText("Settings"), isDisplayed())).perform(click())
                 listOf("Chats", "Privacy", "Notifications", "Appearance").forEach { onView(allOf(withText(it), isDisplayed())).check(matches(isDisplayed())) }
@@ -1297,17 +1415,15 @@ class ServerConnectionAndroidTest {
                 pressBack()
                 onView(withText("Privacy")).perform(click())
                 onView(withText("Send message read status")).check(matches(isDisplayed()))
-                onView(withText("Chat security")).check(matches(isDisplayed()))
+                onView(withText("Server security")).check(matches(isDisplayed()))
                 pressBack()
                 onView(withText("Appearance")).perform(click())
-                onView(withText(com.example.carriex.ui.chat.Appearance.modes(instrumentation.targetContext)[com.example.carriex.ui.chat.Appearance.mode(instrumentation.targetContext)])).perform(click())
-                onView(withText("Black")).perform(click())
-                onView(withText("Black")).check(matches(isDisplayed()))
-                onView(withText(com.example.carriex.ui.chat.Appearance.accents(instrumentation.targetContext)[com.example.carriex.ui.chat.Appearance.accent(instrumentation.targetContext)])).perform(click())
-                onView(withText("Green")).perform(click())
+                onView(withText("Black")).perform(scrollTo(), click())
+                onView(withText("Black")).perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withText("Green")).perform(scrollTo(), click())
                 scenario.recreate()
-                onView(withText("Black")).check(matches(isDisplayed()))
-                onView(withText("Green")).check(matches(isDisplayed()))
+                onView(withText("Black")).perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withText("Green")).perform(scrollTo()).check(matches(isDisplayed()))
                 captureNavigation("settings-appearance")
                 scenario.onActivity { activity ->
                     assertEquals(android.content.res.Configuration.UI_MODE_NIGHT_YES,

@@ -58,6 +58,7 @@ class NotificationAndroidTest {
     @Volatile private var revision = 9L
 
     @Before fun setup() {
+        preferences.edit().putBoolean("setup_completed", true).commit()
         original = preferences.all
         preferences.edit().putBoolean("notifications_enabled", false).commit()
         NotificationPolling.schedule(context)
@@ -91,7 +92,7 @@ class NotificationAndroidTest {
                 return MockResponse().setHeader("Content-Type", "application/json").setBody(body.toString())
             }
         }
-        preferences.edit().clear().putString("paired_servers_v1", JSONArray().put(profile.toJson()).toString())
+        preferences.edit().clear().putBoolean("setup_completed", true).putString("paired_servers_v1", JSONArray().put(profile.toJson()).toString())
             .putBoolean("notifications_enabled", true).putBoolean("battery_prompt_shown", true).commit()
         NotificationPolling.appVisible = false
         NotificationPolling.channels(context)

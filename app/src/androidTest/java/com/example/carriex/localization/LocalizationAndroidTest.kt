@@ -21,6 +21,10 @@ import java.util.Locale
 
 @RunWith(AndroidJUnit4::class)
 class LocalizationAndroidTest {
+    @org.junit.Before fun finishSetupForExistingUserFixtures() {
+        InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
+            .edit().putBoolean("setup_completed", true).commit()
+    }
     private fun setTestLanguage(tag: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -36,50 +40,28 @@ class LocalizationAndroidTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val original = AppLanguage.selected(context)
-        fun screenshot(name: String) {
-            instrumentation.waitForIdleSync()
-            val directory = java.io.File(context.filesDir, "localization-review").apply { mkdirs() }
-            val bitmap = instrumentation.uiAutomation.takeScreenshot()
-            try {
-                java.io.File(directory, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-            } finally { bitmap.recycle() }
-        }
         setTestLanguage("en")
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 onView(withContentDescription("Open navigation menu")).perform(click())
                 onView(allOf(withText("Settings"), isDisplayed())).perform(click())
-                for ((tag, settings, language, appearance) in listOf(
-                    listOf("en", "Settings", "Language", "Appearance"),
-                    listOf("ru", "Настройки", "Язык", "Оформление"))) {
-                    if(tag == "ru") {
-                        onView(withText("Language")).perform(click())
-                        onView(withText("Русский")).perform(click())
-                    }
-                    onView(allOf(withText(settings), isDisplayed())).check(matches(isDisplayed()))
-                    onView(withText(language)).check(matches(isDisplayed()))
-                    screenshot("$tag-settings")
-                    onView(withText(appearance)).perform(click())
-                    scenario.recreate()
-                    onView(withText(if(tag == "ru") "Тема" else "Theme")).check(matches(isDisplayed()))
-                    screenshot("$tag-appearance")
-                    pressBack()
-                    onView(withText(if(tag == "ru") "Конфиденциальность" else "Privacy")).perform(click())
-                    screenshot("$tag-privacy")
-                    pressBack()
-                    onView(allOf(withText(if(tag == "ru") "Чаты" else "Chats"), isDisplayed())).perform(click())
-                    screenshot("$tag-chats")
-                    pressBack()
-                }
-                onView(withText("Язык")).perform(click())
-                onView(withText("English")).perform(click())
+                onView(withText("Appearance")).perform(click())
+                onView(withText(context.getString(R.string.language_ru))).perform(click())
+                instrumentation.waitForIdleSync()
+                val ru = localized("ru")
+                onView(withText(ru.getString(R.string.language))).check(matches(isDisplayed()))
+                scenario.recreate()
+                onView(withText(ru.getString(R.string.language))).check(matches(isDisplayed()))
+                onView(withText(context.getString(R.string.language_en))).perform(click())
+                instrumentation.waitForIdleSync()
                 onView(withText("Language")).check(matches(isDisplayed()))
                 scenario.recreate()
                 onView(withText("Language")).check(matches(isDisplayed()))
+                pressBack()
+                onView(withText("Privacy")).perform(click())
+                onView(withText("Send message read status")).check(matches(isDisplayed()))
             }
-        } finally {
-            setTestLanguage(original)
-        }
+        } finally { setTestLanguage(original) }
     }
 
     private fun localized(tag: String): Context {

@@ -12,6 +12,55 @@ import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class ChatStoreAndroidTest {
+    @Test fun cachedTerminalGroupRecoversAnInterruptedHistoryDeletion() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val device = com.example.carriex.auth.AndroidDeviceIdentity.load()
+        val state = com.example.carriex.crypto.groups.GroupState.create(device, "Interrupted leave")
+            .next(device, "close", "")
+        val name = "group-clear-${UUID.randomUUID()}.db"
+        val scope = UUID.randomUUID().toString()
+        try {
+            ChatStore(context, name).use { db ->
+                val saved = db.x3dh("$scope/groups")
+                saved.put("state/${state.id}", state.json.toString())
+                saved.put("clear-on-leave/${state.id}", "true")
+                db.addIncoming(GroupMessagingService.historyScope(scope, state.id),
+                    Message("friend", state.id, "Erase this history".toByteArray(), Message.MessageType.DATA))
+            }
+            ChatStore(context, name).use { db ->
+                assertTrue(GroupMessagingService.cached(db, scope, device.userId).single().messages.isEmpty())
+                assertNull(db.x3dh("$scope/groups").get("clear-on-leave/${state.id}"))
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
+    @Test fun lifecycleActionSurvivesReopeningAndDeletedHistoryKeepsOnlyDeduplicationIds() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "lifecycle-${UUID.randomUUID()}.db"
+        val scope = UUID.randomUUID().toString()
+        val peer = "b".repeat(64)
+        val action = ContactAction(deleteHistory = true, block = true, removeKeys = true)
+        val message = Message(peer, "me", "old history".toByteArray(), Message.MessageType.DATA)
+        try {
+            ChatStore(context, name).use { db ->
+                db.addIncoming(scope, message)
+                db.queueContactAction(scope, "me", peer, action)
+            }
+            ChatStore(context, name).use { db ->
+                val pending = db.contactActions(scope).single()
+                assertEquals(Message.MessageType.CHAT_EVENT, pending.type)
+                assertEquals(action, ContactAction.parse(pending.content))
+                assertEquals(Message.MessageType.CHAT_EVENT, db.pending(scope).single().first.type)
+                db.queueContactAction(scope, "me", peer, action)
+                assertEquals(pending.id, db.contactActions(scope).single().id)
+                db.removeChat(scope, peer)
+                assertTrue(db.history(scope).isEmpty())
+                assertTrue(db.wasRemoved(scope, message.id))
+                assertTrue(db.wasRemoved(scope, pending.id))
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
     @Test fun fixedSessionUpgradePreservesHistoryAndResealsPendingMessagesWithFreshIds() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val name="ratchet-upgrade-${UUID.randomUUID()}.db"
@@ -25,6 +74,16 @@ class ChatStoreAndroidTest {
                 store.x3dh(scope).put("session/old","{\"root\":\"old secret\"}")
                 store.x3dh(scope).put("local/identity","identity stays")
                 store.x3dh(scope).put("peer-protection/friend","one-time")
+                // Reconstruct the actual v6 message schema before exercising its upgrade.
+                store.writableDatabase.execSQL("""CREATE TABLE messages_v6 (
+                    id TEXT NOT NULL, scope TEXT NOT NULL, peer TEXT NOT NULL,
+                    sender TEXT NOT NULL, recipient TEXT NOT NULL, body BLOB NOT NULL,
+                    wire BLOB, status TEXT, created_at INTEGER NOT NULL, sent_at INTEGER,
+                    PRIMARY KEY(scope,id))""")
+                store.writableDatabase.execSQL("INSERT INTO messages_v6 SELECT id,scope,peer,sender,recipient,body,wire,status,created_at,sent_at FROM messages")
+                store.writableDatabase.execSQL("DROP TABLE messages")
+                store.writableDatabase.execSQL("ALTER TABLE messages_v6 RENAME TO messages")
+                store.writableDatabase.execSQL("CREATE INDEX conversation ON messages(scope,peer,created_at)")
                 store.writableDatabase.execSQL("DROP TABLE read_status")
                 store.writableDatabase.execSQL("DROP TABLE removed_message_ids")
                 store.writableDatabase.version=6

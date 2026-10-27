@@ -20,12 +20,14 @@ class MessagingService(
     private val protectUnknown: Boolean = true,
     private val autoAccept: () -> Boolean = { false },
     private val sendReadStatus: () -> Boolean = { false },
+    private val applyContactPolicy: (String, ContactAction) -> Unit = { _, _ -> },
 ) {
     var onMessageDecrypted: ((Message) -> Boolean)? = null
     var onStatus: ((String, Message.DeliveryStatus) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
     var onRequestsChanged: (() -> Unit)? = null
     var onNewMessageRequest: (() -> Unit)? = null
+    var onContactActionCompleted: ((String, ContactAction, Message) -> Unit)? = null
     private val protocol = X3dhProtocol(device, chatStore.x3dh(scope), allowWithoutOneTimeKey = allowFallback)
     private val outgoing = Executors.newSingleThreadExecutor()
     private val fetching = AtomicBoolean(false)
@@ -35,7 +37,7 @@ class MessagingService(
 
     @Synchronized fun close() {
         closed = true; outgoing.shutdownNow()
-        onMessageDecrypted = null; onStatus = null; onError = null; onRequestsChanged = null; onNewMessageRequest = null
+        onMessageDecrypted = null; onStatus = null; onError = null; onRequestsChanged = null; onNewMessageRequest = null; onContactActionCompleted = null
     }
     @Synchronized private fun enqueue(task: () -> Unit) {
         if (!closed) outgoing.execute { if (!closed) task() }
@@ -85,9 +87,49 @@ class MessagingService(
     }
     fun send(plain: Message) { enqueue { if (ready) sendPlain(plain) } }
     fun restartSession(peer: String) { enqueue {
-        try { chatStore.atomic { protocol.restartSending(peer) } }
-        catch (e: Exception) { onError?.invoke(e.message ?: "Unable to restart secure session") }
+        queueContactAction(peer, ContactAction(restart = true))
     } }
+    fun contactAction(peer: String, action: ContactAction) { enqueue { queueContactAction(peer, action) } }
+
+    private fun queueContactAction(peer: String, action: ContactAction) {
+        try {
+            check(ready) { "Wait for the server connection to finish" }
+            chatStore.queueContactAction(scope, userId, peer, action)
+            processContactActions()
+        } catch(e: Exception) { onError?.invoke("Contact action is waiting: ${e.message}") }
+    }
+
+    /** Exact packets and action markers survive response loss or process death. */
+    private fun processContactActions() {
+        chatStore.contactActions(scope).forEach { plain ->
+            if(closed) return
+            try {
+                check(plain.from == userId)
+                val action = ContactAction.parse(plain.content)
+                val wire = chatStore.savedWire(scope, plain) ?: chatStore.atomic {
+                    protocol.encrypt(plain) { transport.claimPrekeys(plain.to) }.also { chatStore.setWire(scope, it) }
+                }
+                val result = transport.sendMessageResult(wire)
+                check(result.accepted || !result.retryable) { result.detail ?: "Connection unavailable" }
+                val delivery = if(result.accepted) Message.DeliveryStatus.SENT else Message.DeliveryStatus.FAILED
+                chatStore.atomic {
+                    // Preference commit happens before erasure so a completed block survives process death.
+                    applyContactPolicy(plain.to, action)
+                    if(action.deleteHistory) chatStore.removeChat(scope, plain.to)
+                    else chatStore.mark(scope, plain.id, delivery)
+                    if(action.removeKeys) protocol.forgetPeer(plain.to)
+                    else if(action.restart) protocol.restartSending(plain.to)
+                    chatStore.x3dh(scope).remove("contact-action/${plain.to}")
+                }
+                onContactActionCompleted?.invoke(plain.to, action, plain.copy(status = delivery))
+                if(!result.accepted) onError?.invoke("Contact action completed locally, but the server rejected its notice: ${result.detail}")
+                if(protectUnknown && (action.block || action.deleteHistory)) {
+                    try { transport.setInboxPolicy(contacts(), blocked()) }
+                    catch(e: Exception) { onError?.invoke("Unable to update inbox policy: ${e.message}") }
+                }
+            } catch(e: Exception) { if(!closed) onError?.invoke("Contact action is waiting: ${e.message}") }
+        }
+    }
     fun refreshPolicy() { enqueue {
         try { if(protectUnknown) transport.setInboxPolicy(contacts(),blocked()) }
         catch(e:Exception) { onError?.invoke(e.message ?: "Unable to update inbox policy") }
@@ -112,8 +154,10 @@ class MessagingService(
             transport.reportRead(userId, ids)) chatStore.readStatusSent(scope, ids)
     }
     private fun retryPending() {
+        processContactActions()
+        val actions = chatStore.contactActions(scope).map { it.id }.toSet()
         chatStore.pending(scope).forEach { (plain, wire) ->
-            if (!closed) {
+            if (!closed && plain.id !in actions) {
                 if(wire!=null && !chatStore.atomic { protocol.wireUsable(wire) }) {
                     updateStatus(plain.id,Message.DeliveryStatus.EXPIRED)
                     onError?.invoke("A saved message's encryption session expired. Copy its text and send it again.")
@@ -160,7 +204,13 @@ class MessagingService(
             if (message.type != Message.MessageType.DATA) error("Legacy key exchange rejected; contact must update Carriex")
             val decoded = chatStore.atomic {
                 if (chatStore.hasIncoming(scope, message.id)) null
-                else protocol.decrypt(message).also { check(chatStore.addIncoming(scope, it)); chatStore.removeRequest(scope,message.id) }
+                else protocol.decrypt(message).also {
+                    if(it.type == Message.MessageType.CHAT_EVENT) {
+                        val action = ContactAction.parse(it.content)
+                        if(action.removeKeys || action.restart) protocol.restartSending(message.from)
+                    }
+                    check(chatStore.addIncoming(scope, it)); chatStore.removeRequest(scope,message.id)
+                }
             }
             // UI notification comes AFTER commit. Redelivery only repeats the acknowledgement.
             if (decoded != null) onMessageDecrypted?.invoke(decoded)

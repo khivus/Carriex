@@ -238,6 +238,16 @@ class X3dhProtocol(
         }
     }
 
+    /** Forget this peer's pins, root/chain keys and skipped keys, retaining local identity and other peers. */
+    fun forgetPeer(peer: String) {
+        require(idPattern.matches(peer) && peer != ownId)
+        store.keys("session/").forEach { key ->
+            if(JSONObject(store.get(key)!!).getString("peer") == peer) store.remove(key)
+        }
+        store.remove("peer/$peer")
+        store.remove("peer-protection/$peer")
+    }
+
     private fun verifyCertificate(json: JSONObject, expected: String): ByteArray {
         require(idPattern.matches(expected) && json.getString("user_id") == expected) { "Wrong contact identity" }
         val ik = X3dhCrypto.decode(json.getString("identity_key"), 32)
@@ -329,7 +339,7 @@ class X3dhProtocol(
         val sid = selected.getString("sid")
         val initiator = selected.getString("role") == "initiator"
         val mode = if (initiator) "init" else "reply"
-        val payload = MessagePayload.encode(message.content, message.sentAt)
+        val payload = MessagePayload.encode(message.content, message.sentAt, message.type)
         try {
             val encrypted = ratchet.encrypt(selected.getJSONObject("ratchet"), payload,
                 aad(message, sid, mode, selected.getJSONObject("header")), clock())
@@ -343,7 +353,7 @@ class X3dhProtocol(
             store.put("session/$sid", selected.toString())
             if (initiator) store.put("peer/${message.to}", selected.getJSONObject("header").getString("recipient_identity"))
             store.put("peer-protection/${message.to}", if(selected.getJSONObject("header").getString("one_time_id").isEmpty()) "fallback" else "one-time")
-            return message.copy(content = wire)
+            return message.copy(content = wire, type = Message.MessageType.DATA)
         } finally { payload.fill(0) }
     }
 
@@ -415,6 +425,6 @@ class X3dhProtocol(
         remoteKey?.let { store.put("peer/${message.from}", X3dhCrypto.encode(it)) }
         consume?.let(store::remove)
         store.put("peer-protection/${message.from}",if(selected.getJSONObject("header").getString("one_time_id").isEmpty()) "fallback" else "one-time")
-        return message.copy(content = decoded.content, sentAt = decoded.sentAt)
+        return message.copy(content = decoded.content, sentAt = decoded.sentAt, type = decoded.type)
     }
 }

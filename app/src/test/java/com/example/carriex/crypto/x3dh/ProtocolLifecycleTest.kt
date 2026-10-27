@@ -39,6 +39,32 @@ class ProtocolLifecycleTest {
     private fun claim(upload: JSONObject, index: Int = 0) = JSONObject(upload.toString())
         .put("one_time_prekey", upload.getJSONArray("one_time_prekeys").getJSONObject(index))
 
+    @Test fun lifecycleNoticesAreAuthenticatedTypedPayloadsAndForgettingOnePeerIsIsolated() {
+        val a = device(); val b = device(); val c = device()
+        val sa = Store(); val sb = Store(); val sc = Store()
+        val alice = protocol(a, sa); val bob = protocol(b, sb); val carol = protocol(c, sc)
+        val bobKeys = publish(bob); val carolKeys = publish(carol)
+        val action = com.example.carriex.messaging.ContactAction(deleteHistory = true, block = true, removeKeys = true)
+        val event = message(a, b, action.bytes()).copy(type = Message.MessageType.CHAT_EVENT)
+        val wire = alice.encrypt(event) { claim(bobKeys) }
+        assertEquals(Message.MessageType.DATA, wire.type)
+        val decoded = bob.decrypt(wire)
+        assertEquals(Message.MessageType.CHAT_EVENT, decoded.type)
+        assertEquals(action, com.example.carriex.messaging.ContactAction.parse(decoded.content))
+        assertEquals(3, com.example.carriex.messaging.ContactAction.timeline(decoded).size)
+        // Text that resembles an event is still ordinary user data.
+        val text = bob.decrypt(alice.encrypt(message(a, b, action.bytes())) { error("Reuse session") })
+        assertEquals(Message.MessageType.DATA, text.type)
+        carol.decrypt(alice.encrypt(message(a, c)) { claim(carolKeys) })
+        val other = sa.values.filter { it.key == "peer/${c.userId}" || it.value.contains(c.userId) }
+        alice.forgetPeer(b.userId)
+        assertNull(sa.get("peer/${b.userId}"))
+        assertNull(sa.get("peer-protection/${b.userId}"))
+        assertTrue(sa.keys("session/").all { JSONObject(sa.get(it)!!).getString("peer") != b.userId })
+        other.forEach { (key, value) -> assertEquals(value, sa.get(key)) }
+        assertEquals("message", String(carol.decrypt(alice.encrypt(message(a, c)) { error("Keep other session") }).content))
+    }
+
     @Test fun oversizedMessagesNeverClaimOrAdvanceAChainAndBoundaryFitsTheRelay() {
         val a=device(); val b=device(); val sa=Store(); val sb=Store()
         val alice=protocol(a,sa); val bob=protocol(b,sb); val upload=publish(bob)

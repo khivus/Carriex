@@ -34,6 +34,7 @@ object NotificationPolling {
     const val ACTION_STOP = "com.example.carriex.STOP_NOTIFICATION_CHECKS"
     const val JOB_ID = 0x434152
     const val SERVICE_ID = 100
+    const val LIVE_MESSAGE_ID = 4
     const val MESSAGES = "pending_messages"
     const val POLLING = "count_polling"
     @Volatile var appVisible = false
@@ -109,7 +110,8 @@ object NotificationPolling {
     }
     fun clearAlerts(context: Context) {
         context.getSystemService(NotificationManager::class.java).activeNotifications
-            .filter { it.id == 1 || it.id == 2 }.forEach { NotificationManagerCompat.from(context).cancel(it.tag,it.id) }
+            .filter { it.id == 1 || (it.id == LIVE_MESSAGE_ID && it.tag?.startsWith("live:") == true) }
+            .forEach { NotificationManagerCompat.from(context).cancel(it.tag,it.id) }
     }
 
     /** A live socket acknowledges messages before the count-only scheduler can see them. */
@@ -122,7 +124,7 @@ object NotificationPolling {
             .setContentText(context.getString(R.string.ui_new_messages_on_server))
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setAutoCancel(true)
             .setContentIntent(openIntent(context, server)).build()
-        try { NotificationManagerCompat.from(context).notify("live:${server.fingerprint}", 2, notification) }
+        try { NotificationManagerCompat.from(context).notify("live:${server.fingerprint}", LIVE_MESSAGE_ID, notification) }
         catch (_: SecurityException) { /* Android permission changed while the message arrived. */ }
     }
 }

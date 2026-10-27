@@ -16,12 +16,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Phone-owned history and outgoing queue. Message bodies are encrypted before SQLite sees them. */
-class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteOpenHelper(context, databaseName, null, 9) {
+class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteOpenHelper(context, databaseName, null, 10) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE messages (
             id TEXT NOT NULL, scope TEXT NOT NULL, peer TEXT NOT NULL,
             sender TEXT NOT NULL, recipient TEXT NOT NULL, body BLOB NOT NULL,
-            wire BLOB, status TEXT, created_at INTEGER NOT NULL, sent_at INTEGER,
+            wire BLOB, status TEXT, created_at INTEGER NOT NULL, sent_at INTEGER, message_type INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY(scope,id)
         )""")
         db.execSQL("CREATE INDEX conversation ON messages(scope, peer, created_at)")
@@ -34,7 +34,7 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion !in 1..8 || newVersion !in 3..9 || oldVersion >= newVersion)
+        if (oldVersion !in 1..9 || newVersion !in 3..10 || oldVersion >= newVersion)
             throw IllegalStateException("Chat database migration from $oldVersion is required")
         if (oldVersion == 1) createExchangeTables(db)
         if (oldVersion < 3) {
@@ -78,6 +78,7 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         if (oldVersion < 6 && newVersion >= 6) createQuarantine(db)
         if (oldVersion < 8 && newVersion >= 8) createRemovedMessages(db)
         if (oldVersion < 9 && newVersion >= 9) createReadStatus(db)
+        if (oldVersion < 10 && newVersion >= 10) db.execSQL("ALTER TABLE messages ADD COLUMN message_type INTEGER NOT NULL DEFAULT 1")
         if (oldVersion < 7 && newVersion >= 7) {
             // A relay may already hold fixed-key wire data after a lost response.
             // Reseal under a new ID, preserving text and time, to avoid ID conflicts.
@@ -118,6 +119,30 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         ids.forEach { id -> db.delete("read_status", "scope=? AND id=?", arrayOf(scope,id)) }
         ids
     }
+    fun clearHistory(scope: String) = atomic {
+        writableDatabase.execSQL("INSERT OR IGNORE INTO removed_message_ids SELECT scope,id FROM messages WHERE scope=?", arrayOf(scope))
+        writableDatabase.delete("messages", "scope=?", arrayOf(scope))
+        writableDatabase.delete("read_status", "scope=?", arrayOf(scope))
+    }
+
+    fun contactActions(scope: String): List<Message> {
+        val state = x3dh(scope)
+        val ids = state.keys("contact-action/").mapNotNull(state::get).toSet()
+        return history(scope).filter { it.id in ids && it.type == Message.MessageType.CHAT_EVENT }
+    }
+
+    fun queueContactAction(scope: String, ownId: String, peer: String, action: ContactAction) = atomic {
+        val saved = x3dh(scope)
+        val previous = saved.get("contact-action/$peer")
+        if(previous == null) {
+            val message = Message(ownId, peer, action.bytes(), Message.MessageType.CHAT_EVENT,
+                status = Message.DeliveryStatus.SENDING, sentAt = System.currentTimeMillis())
+            addOutgoing(scope, message); saved.put("contact-action/$peer", message.id)
+        } else check(contactActions(scope).first { it.id == previous }.content.contentEquals(action.bytes())) {
+            "A different contact action is already waiting for this server. Reconnect to finish it."
+        }
+    }
+
     data class Request(val peer: String, val reason: String, val count: Int)
     private fun pruneRequests() {
         writableDatabase.delete("quarantined", "created<?", arrayOf((System.currentTimeMillis()-30L*86400000).toString()))
@@ -227,7 +252,7 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         val values = ContentValues().apply {
             put("id", message.id); put("scope", scope); put("peer", message.to)
             put("sender", message.from); put("recipient", message.to)
-            put("body", seal(scope, message.id, message.content))
+            put("body", seal(scope, message.id, message.content)); put("message_type", message.type.ordinal)
             put("status", Message.DeliveryStatus.SENDING.name)
             put("created_at", System.currentTimeMillis())
             put("sent_at", message.sentAt ?: System.currentTimeMillis())
@@ -240,7 +265,7 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         val values = ContentValues().apply {
             put("id", message.id); put("scope", scope); put("peer", message.from)
             put("sender", message.from); put("recipient", message.to)
-            put("body", seal(scope, message.id, message.content))
+            put("body", seal(scope, message.id, message.content)); put("message_type", message.type.ordinal)
             put("created_at", System.currentTimeMillis())
             message.sentAt?.let { put("sent_at", it) }
         }
@@ -317,14 +342,14 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
     fun savedWire(scope: String, message: Message): Message? = readableDatabase.rawQuery(
         "SELECT wire FROM messages WHERE scope=? AND id=? AND sender=? AND recipient=? AND wire IS NOT NULL",
         arrayOf(scope, message.id, message.from, message.to)).use {
-        if (it.moveToFirst()) message.copy(content = open(scope, message.id, it.getBlob(0)), sentAt = null) else null
+        if (it.moveToFirst()) message.copy(content = open(scope, message.id, it.getBlob(0)), sentAt = null, type = Message.MessageType.DATA) else null
     }
 
     private fun createReadStatus(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE read_status (scope TEXT NOT NULL,id TEXT NOT NULL,sent INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
     }
     fun queueReadStatus(scope: String, id: String, ownId: String) {
-        writableDatabase.execSQL("INSERT OR IGNORE INTO read_status(scope,id) SELECT scope,id FROM messages WHERE scope=? AND id=? AND recipient=? AND status IS NULL",
+        writableDatabase.execSQL("INSERT OR IGNORE INTO read_status(scope,id) SELECT scope,id FROM messages WHERE scope=? AND id=? AND recipient=? AND status IS NULL AND message_type=1",
             arrayOf(scope, id, ownId))
     }
     fun pendingReadStatus(scope: String): List<String> = readableDatabase.rawQuery(
@@ -349,13 +374,13 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
 
     fun history(scope: String): List<Message> {
         val messages = mutableListOf<Message>()
-        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "status", "sent_at"),
+        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "status", "sent_at", "message_type"),
             "scope=?", arrayOf(scope), null, null, "created_at, rowid").use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getString(0)
                 val status = cursor.getString(4)?.let(Message.DeliveryStatus::valueOf)
                 messages.add(Message(cursor.getString(1), cursor.getString(2), open(scope, id, cursor.getBlob(3)),
-                    Message.MessageType.DATA, id, status, if (cursor.isNull(5)) null else cursor.getLong(5)))
+                    Message.MessageType.values()[cursor.getInt(6)], id, status, if (cursor.isNull(5)) null else cursor.getLong(5)))
             }
         }
         return messages
@@ -363,12 +388,12 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
 
     fun pending(scope: String): List<Pair<Message, Message?>> {
         val pending = mutableListOf<Pair<Message, Message?>>()
-        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "wire", "sent_at"),
+        readableDatabase.query("messages", arrayOf("id", "sender", "recipient", "body", "wire", "sent_at", "message_type"),
             "scope=? AND status='SENDING'", arrayOf(scope), null, null, "created_at").use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getString(0)
                 val sender = cursor.getString(1); val recipient = cursor.getString(2)
-                val plain = Message(sender, recipient, open(scope, id, cursor.getBlob(3)), Message.MessageType.DATA, id,
+                val plain = Message(sender, recipient, open(scope, id, cursor.getBlob(3)), Message.MessageType.values()[cursor.getInt(6)], id,
                     sentAt = if (cursor.isNull(5)) null else cursor.getLong(5))
                 val wire = if (cursor.isNull(4)) null else Message(sender, recipient,
                     open(scope, id, cursor.getBlob(4)), Message.MessageType.DATA, id)

@@ -27,10 +27,20 @@ class GroupMessagingService(
 ) {
     companion object {
         fun historyScope(server: String, group: String) = "$server/group/$group"
+        fun clearCachedHistory(db: ChatStore, scope: String, id: String) = db.atomic {
+            val saved = db.x3dh("$scope/groups")
+            val revision = saved.get("state/$id")?.let { JSONObject(it).getInt("revision") } ?: 0
+            db.clearHistory(historyScope(scope, id))
+            saved.keys("event/$id/").forEach(saved::remove)
+            saved.put("history-clear/$id", revision.toString())
+            saved.remove("clear-on-leave/$id")
+        }
         private fun events(db: ChatStore, scope: String, id: String, owner: String): List<GroupEvent> {
             val saved = db.x3dh("$scope/groups")
+            val cutoff = saved.get("history-clear/$id")?.toIntOrNull() ?: 0
             val all = saved.keys("event/$id/").mapNotNull { key ->
                 val event = JSONObject(saved.get(key) ?: return@mapNotNull null)
+                if(event.getJSONObject("state").getInt("revision") <= cutoff) return@mapNotNull null
                 GroupEvent(GroupState.parse(event.getJSONObject("state"), verifyChain = false),
                     event.optString("after").takeIf { it.isNotEmpty() })
             }.sortedBy { it.state.revision }
@@ -53,6 +63,8 @@ class GroupMessagingService(
             val saved = db.x3dh("$scope/groups")
             return saved.keys("state/").map { key ->
                 val state = GroupState.parse(JSONObject(saved.get(key)!!), verifyChain = false)
+                if(saved.get("clear-on-leave/${state.id}") == "true" && (state.closed || owner !in state.members))
+                    clearCachedHistory(db, scope, state.id)
                 GroupConversation(state, db.history(historyScope(scope, state.id)), false,
                     events = events(db, scope, state.id, owner), joining = saved.get("waiting/${state.id}") == "true")
             }
@@ -100,11 +112,18 @@ class GroupMessagingService(
         }
         synchronize(); done(created.id)
     }
-    fun change(id: String, action: String, target: String = "", done: () -> Unit = {}) = enqueue(done) {
+    fun clearHistory(id: String) = enqueue {
+        val group = state(id) ?: error("Group is unavailable")
+        require(group.closed || device.userId !in group.members) { "Leave this group before deleting its saved history." }
+        clearCachedHistory(db, scope, id); emit()
+    }
+
+    fun change(id: String, action: String, target: String = "", deleteHistory: Boolean = false, done: () -> Unit = {}) = enqueue(done) {
         try {
             require(started) { "Wait for the server connection to finish" }
             synchronize(membershipOnly = true)
             val current = state(id) ?: error("Group is unavailable")
+            if(deleteHistory && action in listOf("leave", "close")) saved.put("clear-on-leave/$id", "true")
             val invitation = saved.get("invitation/$id")?.let { GroupState.parse(JSONObject(it), verifyChain = false) } ?: current
             val next = when(action) {
                 "rename" -> current.next(device, "rename", name = target.trim())
@@ -164,6 +183,7 @@ class GroupMessagingService(
     }
 
     private fun recordEvent(event: GroupState, afterMessage: String?) {
+        if(event.revision <= (saved.get("history-clear/${event.id}")?.toIntOrNull() ?: 0)) return
         val key = "event/${event.id}/${event.revision}"
         if(saved.get(key) == null) saved.put(key, JSONObject().put("state", event.json)
             .put("after", afterMessage ?: "").toString())
@@ -482,6 +502,8 @@ class GroupMessagingService(
         if(closed) return
         val groups = saved.keys("state/").map { key ->
             val group = state(key.removePrefix("state/"))!!
+            if(saved.get("clear-on-leave/${group.id}") == "true" && (group.closed || device.userId !in group.members))
+                clearCachedHistory(db, scope, group.id)
             GroupConversation(group, db.history(historyScope(scope, group.id)),
                 saved.get("ready/${group.id}") == group.membershipHash, problems[group.id], events(db, scope, group.id, device.userId), saved.get("waiting/${group.id}") == "true")
         }

@@ -125,7 +125,7 @@
     <string name="ui_group_invitation_alerts">"Уведомления о приглашениях в группы"</string>
     <string name="ui_notify_when_you_receive_a_group_invitation_including_while_carriex_is_">"Уведомлять о приглашениях в группы, в том числе при открытом Carriex. Нажмите на уведомление, чтобы открыть раздел «Запросы»."</string>
     <string name="ui_background_checks">"Фоновые проверки"</string>
-    <string name="ui_get_a_notification_when_a_saved_server_has_pending_messages_checks_fet">"Уведомлять об ожидающих сообщениях на сохранённых серверах. При проверке загружается только их количество. Для получения и расшифровки сообщений откройте Carriex."</string>
+    <string name="ui_get_a_notification_when_a_saved_server_has_pending_messages_checks_fet">"Фоновые проверки получают только количество ожидающих сообщений. Сохранённое активное подключение может получать сообщения, пока вы используете другое приложение."</string>
     <string name="ui_check_for_pending_messages">"Проверять наличие ожидающих сообщений"</string>
     <string name="ui_check_interval">"Интервал проверки"</string>
     <string name="ui_custom_interval">"Свой интервал"</string>
@@ -313,7 +313,7 @@
     <string name="ui_accent_color_default">"Акцентный цвет (по умолчанию)"</string>
     <string name="ui_theme_surface_default">"Фон темы (по умолчанию)"</string>
     <string name="ui_pending_messages">"Ожидающие сообщения"</string>
-    <string name="ui_counts_only_messages_are_downloaded_when_carriex_is_opened">"Только количество. Сообщения загружаются при открытии Carriex."</string>
+    <string name="ui_counts_only_messages_are_downloaded_when_carriex_is_opened">"Оповещения о сообщениях из активных подключений и фоновых проверок."</string>
     <string name="ui_custom_polling_status">"Состояние фоновых проверок"</string>
     <string name="ui_shown_while_a_custom_interval_below_15_minutes_is_running">"Показывается при проверках с интервалом менее 15 минут."</string>
     <string name="ui_requests_and_invitations">"Запросы и приглашения"</string>
@@ -588,4 +588,25 @@
     <string name="ui_compat_older_app">"Используйте совместимый старый выпуск приложения или попросите владельца обновить сервер."</string>
     <string name="ui_compat_ask_host">"Попросите владельца обновить сервер или уточните поддерживаемую версию приложения."</string>
     <string name="ui_server_incompatible_prompt">"Приложение несовместимо с сервером. %1$s"</string>
+    <string name="ui_delete_history">"Удалить сохранённую историю"</string>
+    <string name="ui_remove_peer_keys">"Удалить ключи шифрования этого контакта"</string>
+    <string name="ui_delete_chat_detail">"Удалить локальные сообщения и черновик. Можно заблокировать контакт или удалить ключи его сеансов. Сначала уведомление ставится в очередь. Временные сбои повторяются; постоянный отказ сервера показывается и не мешает локальному удалению."</string>
+    <string name="ui_remove_keys_detail">"Удаление ключей также сбрасывает проверку. Новое общение создаст новый защищённый сеанс."</string>
+    <string name="ui_block_notice">"Заблокировать контакт на этом устройстве и отправить системное уведомление."</string>
+    <string name="ui_delete_group_history_detail">"Удалить сохранённые сообщения и историю событий с этого устройства? Состояние участия и криптографические контрольные точки сохранятся."</string>
+    <string name="ui_leave_history_detail">"Удалить сохранённую историю на этом устройстве после выхода или закрытия группы."</string>
+    <string name="ui_rename_member_action">"Переименовать: %1$s"</string>
+    <string name="ui_remove_member_action">"Удалить участника: %1$s"</string>
+    <string name="ui_event_history_deleted">"%1$s удалил(а) историю чата на своём устройстве."</string>
+    <string name="ui_event_blocked">"%1$s заблокировал(а) этот контакт."</string>
+    <string name="ui_event_keys_removed">"%1$s удалил(а) ключи шифрования этого контакта."</string>
+    <string name="ui_event_restarted">"%1$s начал(а) новый защищённый сеанс."</string>
+    <string name="ui_system_you">"Вы"</string>
+    <string name="ui_local_member_names">"Имена видны только на этом устройстве для этого сервера. Нажмите карандаш для переименования. Администратор может удалить участника кнопкой ×."</string>
+    <string name="ui_event_own_history_deleted">"Вы удалили историю чата на этом устройстве."</string>
+    <string name="ui_back_to_group">"Назад в группу"</string>
+    <string name="ui_contact_action_pending">"Действие ожидает ответа сервера. Оставьте этот сервер подключённым."</string>
+    <string name="ui_event_own_blocked">"Вы заблокировали этот чат."</string>
+    <string name="ui_event_own_keys_removed">"Вы удалили ключи шифрования этого чата."</string>
+    <string name="ui_event_own_restarted">"Вы начали новый защищённый сеанс."</string>
 </resources>

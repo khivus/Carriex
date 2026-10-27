@@ -125,7 +125,7 @@
     <string name="ui_group_invitation_alerts">"Group invitation alerts"</string>
     <string name="ui_notify_when_you_receive_a_group_invitation_including_while_carriex_is_">"Notify when you receive a group invitation, including while Carriex is open. Tap to review it in Requests."</string>
     <string name="ui_background_checks">"Background checks"</string>
-    <string name="ui_get_a_notification_when_a_saved_server_has_pending_messages_checks_fet">"Get a notification when a saved server has pending messages. Checks fetch counts only; open Carriex to receive and decrypt messages."</string>
+    <string name="ui_get_a_notification_when_a_saved_server_has_pending_messages_checks_fet">"Background checks fetch pending counts only. A retained live connection can receive messages while you use another app."</string>
     <string name="ui_check_for_pending_messages">"Check for pending messages"</string>
     <string name="ui_check_interval">"Check interval"</string>
     <string name="ui_custom_interval">"Custom interval"</string>
@@ -313,7 +313,7 @@
     <string name="ui_accent_color_default">"Accent color (default)"</string>
     <string name="ui_theme_surface_default">"Theme surface (default)"</string>
     <string name="ui_pending_messages">"Pending messages"</string>
-    <string name="ui_counts_only_messages_are_downloaded_when_carriex_is_opened">"Counts only. Messages are downloaded when Carriex is opened."</string>
+    <string name="ui_counts_only_messages_are_downloaded_when_carriex_is_opened">"Message alerts from live connections and background checks."</string>
     <string name="ui_custom_polling_status">"Custom polling status"</string>
     <string name="ui_shown_while_a_custom_interval_below_15_minutes_is_running">"Shown while a custom interval below 15 minutes is running."</string>
     <string name="ui_requests_and_invitations">"Requests and invitations"</string>
@@ -588,4 +588,25 @@
     <string name="ui_compat_older_app">"Use a compatible older app release or ask the server owner to update the server."</string>
     <string name="ui_compat_ask_host">"Ask the server owner to update the server or confirm which app version it supports."</string>
     <string name="ui_server_incompatible_prompt">"This app and server are incompatible. %1$s"</string>
+    <string name="ui_delete_history">"Delete saved history"</string>
+    <string name="ui_remove_peer_keys">"Remove this contact’s encryption keys"</string>
+    <string name="ui_delete_chat_detail">"Delete local messages and the draft. Choose whether to block this contact or remove their session keys. A notice is queued first. Temporary failures are retried; a permanent server refusal is reported and does not prevent local deletion."</string>
+    <string name="ui_remove_keys_detail">"Removing keys also clears verification. New contact establishes a new secure session."</string>
+    <string name="ui_block_notice">"Block this contact on this device and send them a system notice."</string>
+    <string name="ui_delete_group_history_detail">"Delete saved messages and event history from this device? Group membership and cryptographic checkpoints are preserved."</string>
+    <string name="ui_leave_history_detail">"Delete the saved history on this device after leaving or closing this group."</string>
+    <string name="ui_rename_member_action">"Rename %1$s"</string>
+    <string name="ui_remove_member_action">"Remove %1$s"</string>
+    <string name="ui_event_history_deleted">"%1$s deleted this chat’s history on their device."</string>
+    <string name="ui_event_blocked">"%1$s blocked this contact."</string>
+    <string name="ui_event_keys_removed">"%1$s removed this contact’s encryption keys."</string>
+    <string name="ui_event_restarted">"%1$s restarted the secure session."</string>
+    <string name="ui_system_you">"You"</string>
+    <string name="ui_local_member_names">"Names are private to this device and server. Use the pencil to edit a name. Admins can remove members with the × button."</string>
+    <string name="ui_event_own_history_deleted">"You deleted this chat’s history on this device."</string>
+    <string name="ui_back_to_group">"Back to group"</string>
+    <string name="ui_contact_action_pending">"Contact action is waiting for the server. Keep this server connected."</string>
+    <string name="ui_event_own_blocked">"You blocked this chat."</string>
+    <string name="ui_event_own_keys_removed">"You removed the encryption keys for this chat."</string>
+    <string name="ui_event_own_restarted">"You restarted the secure session."</string>
 </resources>

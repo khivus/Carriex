@@ -31,6 +31,49 @@ class AppExperienceAndroidTest {
     private fun descendants(view: View): List<View> = listOf(view) + if(view is ViewGroup)
         (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
 
+    @Test fun updateScreenShowsNotesAndSkipDismissesExactlyOneVersion() {
+        val setup = prefs.getBoolean("setup_completed", false)
+        val skipped = prefs.getString("skipped_update", null)
+        prefs.edit().putBoolean("setup_completed", true).commit()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var updates: com.example.carriex.updates.UpdateViewModel
+                scenario.onActivity { updates = ViewModelProvider(it)[com.example.carriex.updates.UpdateViewModel::class.java] }
+                // UI verification must not depend on GitHub visibility or network latency.
+                val client = updates.javaClass.getDeclaredField("client").apply { isAccessible = true }.get(updates) as okhttp3.OkHttpClient
+                client.dispatcher.cancelAll()
+                val deadline = System.currentTimeMillis() + 5000
+                while(updates.checking && System.currentTimeMillis() < deadline) Thread.sleep(50)
+                assertFalse(updates.checking)
+                scenario.onActivity { activity ->
+                    updates.javaClass.getDeclaredField("release").apply { isAccessible = true }.set(updates,
+                        com.example.carriex.updates.ReleaseInfo("v999.0", "A visible release note", "Carriex-universal.apk",
+                            "https://github.com/khivus/Carriex/releases/download/v999.0/Carriex-universal.apk", 100, null))
+                    updates.onChanged?.invoke()
+                    val texts = descendants(activity.window.decorView).filterIsInstance<TextView>()
+                    assertTrue(texts.any { it.isShown && it.text.toString() == "A visible release note" })
+                    assertTrue(texts.any { it.isShown && it.text.toString() == activity.getString(R.string.ui_download_update) })
+                    texts.single { it.text.toString() == activity.getString(R.string.ui_skip_version) }.performClick()
+                    texts.single { it.text.toString() == activity.getString(R.string.ui_dismiss) }.performClick()
+                    assertEquals("v999.0", prefs.getString("skipped_update", null))
+                    assertFalse(updates.visible)
+                }
+            }
+        } finally { prefs.edit().putBoolean("setup_completed", setup).putString("skipped_update", skipped).commit() }
+    }
+
+    @Test fun installerProviderSharesOnlyTheUpdateDirectory() {
+        val file = java.io.File(context.cacheDir, "updates/fixture.apk").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(1)) }
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.updates", file)
+            assertEquals("content", uri.scheme)
+            try {
+                androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.updates", java.io.File(context.filesDir, "private.db"))
+                fail("Private files must not be shared by the installer")
+            } catch(_: IllegalArgumentException) { }
+        } finally { file.delete() }
+    }
+
     @Test fun firstRunShowsOnlyLanguageThenAppearanceAndNotificationEssentials() {
         val saved = prefs.all
         val language = AppLanguage.selected(context)

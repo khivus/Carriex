@@ -21,7 +21,9 @@ data class Message(
         KEY_EXCHANGE,
         DATA,
         /** Local presentation of a verified membership transition; never sent as chat data. */
-        GROUP_EVENT
+        GROUP_EVENT,
+        /** Authenticated direct-chat lifecycle notice; wire transport still uses DATA. */
+        CHAT_EVENT
     }
 
     override fun equals(other: Any?): Boolean {

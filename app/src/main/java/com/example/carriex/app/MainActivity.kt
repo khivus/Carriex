@@ -14,6 +14,7 @@ import com.example.carriex.notifications.NotificationPolling
 import com.example.carriex.notifications.CountPoller
 import androidx.navigation.fragment.NavHostFragment
 import com.example.carriex.ui.chat.ChatScreen
+import com.example.carriex.security.AppLockController
 
 /**
  * Main entry point for the application.
@@ -23,6 +24,8 @@ import com.example.carriex.ui.chat.ChatScreen
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    lateinit var appLock: AppLockController
+        private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         com.example.carriex.ui.chat.SetupProgress.prepare(NotificationPolling.preferences(this))
@@ -32,21 +35,28 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
+        val container = android.widget.FrameLayout(this)
+        val protectedContent = android.widget.FrameLayout(this)
+        container.addView(protectedContent, android.widget.FrameLayout.LayoutParams(-1, -1))
+        if (savedInstanceState == null) AppLockController.session.lock()
+        appLock = AppLockController(this, container, protectedContent)
         binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
-        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
+        protectedContent.addView(binding.root)
+        setContentView(container)
+        appLock.attachBackHandler()
+        ViewCompat.setOnApplyWindowInsetsListener(container) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
-            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
+            container.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
             WindowInsetsCompat.CONSUMED
         }
+
         val lightTheme = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK != Configuration.UI_MODE_NIGHT_YES
         WindowCompat.getInsetsController(window, binding.root).apply {
             isAppearanceLightStatusBars = lightTheme
             isAppearanceLightNavigationBars = lightTheme
         }
-        ViewCompat.requestApplyInsets(binding.root)
+        ViewCompat.requestApplyInsets(container)
         ViewModelProvider(this)[com.example.carriex.updates.UpdateViewModel::class.java].check()
         if (savedInstanceState == null) openNotification(intent)
     }
@@ -62,7 +72,6 @@ class MainActivity : AppCompatActivity() {
                 supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().firstOrNull()
                     ?.childFragmentManager?.fragments?.filterIsInstance<ChatScreen>()?.firstOrNull()?.showNotificationSettings()
             }
-            intent.data = null
         }
         val url = intent.getStringExtra(NotificationPolling.EXTRA_SERVER) ?: return
         val model = ViewModelProvider(this)[ChatViewModel::class.java]
@@ -87,10 +96,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        appLock.stop(isChangingConfigurations)
         if (!isChangingConfigurations) {
             NotificationPolling.appVisible = false
             ViewModelProvider(this)[ChatViewModel::class.java].onBackground()
         }
         super.onStop()
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        appLock.resume()
+    }
+
+    override fun onPause() {
+        appLock.pause()
+        super.onPause()
     }
 }

@@ -35,7 +35,7 @@ import com.example.carriex.presentation.chat.ChatViewModel
 import com.example.carriex.model.Message
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.checkbox.MaterialCheckBox
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.example.carriex.security.ProtectedDialogBuilder as MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.google.android.material.appbar.MaterialToolbar
@@ -977,6 +977,7 @@ class ChatScreen : Fragment() {
     private fun sectionTitle(id: String): String = when(id) {
         "Chats" -> getString(R.string.ui_chats)
         "Privacy" -> getString(R.string.ui_privacy)
+        "AppLock" -> getString(R.string.lock_title)
         "Notifications" -> getString(R.string.ui_notifications)
         "Appearance" -> getString(R.string.ui_appearance)
         "updates" -> getString(R.string.ui_updates)
@@ -994,6 +995,13 @@ class ChatScreen : Fragment() {
                 content.addView(label(getString(R.string.ui_both_options_apply_to_all_saved_servers_turn_them_off_to_review_new_re), 14f, true))
             }
             "Privacy" -> privacySettings()
+            "AppLock" -> {
+                com.example.carriex.security.AppLockSettings(
+                    requireActivity() as com.example.carriex.app.MainActivity,
+                    (requireActivity() as com.example.carriex.app.MainActivity).appLock,
+                    ::settingCard
+                ) { if (view != null) { settingsBuilt = false; render() } }.build(settingsContent())
+            }
             "Notifications" -> notificationsSettings()
             "updates" -> {
                 val content = settingsContent()
@@ -1030,6 +1038,7 @@ class ChatScreen : Fragment() {
             else -> {
                 val content = settingsContent()
                 listOf("Chats" to getString(R.string.ui_message_requests_and_group_invitations), "Privacy" to getString(R.string.ui_chat_security_blocked_devices_and_read_status),
+                    "AppLock" to getString(R.string.lock_settings_detail),
                     "Notifications" to getString(R.string.ui_request_alerts_and_background_checks), "Appearance" to getString(R.string.ui_appearance_description),
                     "updates" to getString(R.string.ui_updates_detail)).forEach { (title, detail) ->
                     settingCard(content, sectionTitle(title), detail).apply {

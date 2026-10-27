@@ -202,25 +202,48 @@ class CountJobService : JobService() {
 class FastCountService : Service() {
     private val executor=Executors.newSingleThreadScheduledExecutor()
     private var task: java.util.concurrent.ScheduledFuture<*>?=null
+    private var taskPeriod: Long?=null
+    private var foregroundStarted=false
+    private var statusConfiguration: Pair<Long, String>?=null
     override fun onBind(intent: Intent?): IBinder?=null
-    override fun onStartCommand(intent: Intent?,flags: Int,startId: Int): Int {
-        val context = AppLanguage.context(this)
-        NotificationPolling.channels(context)
-        val status=NotificationCompat.Builder(this,NotificationPolling.POLLING).setSmallIcon(R.drawable.ic_stat_message)
+    private fun statusNotification(context: Context) =
+        NotificationCompat.Builder(context,NotificationPolling.POLLING).setSmallIcon(R.drawable.ic_stat_message)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentTitle(context.getString(R.string.ui_carriex_notification_checks))
             .setContentText(context.getString(R.string.ui_every_counts_only, LocalizedFormat.interval(context, NotificationPolling.interval(this))))
+            .setOnlyAlertOnce(true)
             .setOngoing(true).setContentIntent(NotificationPolling.openIntent(this))
             .addAction(0,context.getString(R.string.ui_stop_checks),PendingIntent.getBroadcast(this,0,
                 Intent(this,NotificationBootReceiver::class.java).setAction(NotificationPolling.ACTION_STOP),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).build()
-        if(Build.VERSION.SDK_INT>=34) startForeground(NotificationPolling.SERVICE_ID,status,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(NotificationPolling.SERVICE_ID,status)
-        if(!NotificationPolling.enabled(this) || NotificationPolling.interval(this)>=JobInfo.getMinPeriodMillis() || !NotificationPolling.permitted(this)) {
+
+    override fun onStartCommand(intent: Intent?,flags: Int,startId: Int): Int {
+        val context = AppLanguage.context(this)
+        val period = NotificationPolling.interval(this)
+        val configuration = period to context.resources.configuration.locales.toLanguageTags()
+        NotificationPolling.channels(context)
+        if(!foregroundStarted) {
+            // Each real service start must enter the foreground. Reopening the app
+            // sends another start command to this instance and must respect dismissal.
+            val status = statusNotification(context)
+            if(Build.VERSION.SDK_INT>=34) startForeground(NotificationPolling.SERVICE_ID,status,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(NotificationPolling.SERVICE_ID,status)
+            foregroundStarted = true
+        } else if(statusConfiguration != configuration &&
+            getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == NotificationPolling.SERVICE_ID && it.tag == null }) {
+            // Refresh a visible interval/language label without restoring a hidden one.
+            try { NotificationManagerCompat.from(context).notify(NotificationPolling.SERVICE_ID, statusNotification(context)) }
+            catch (_: SecurityException) { /* Notification permission may be revoked during the update. */ }
+        }
+        statusConfiguration = configuration
+        if(!NotificationPolling.enabled(this) || period>=JobInfo.getMinPeriodMillis() || !NotificationPolling.permitted(this)) {
             stopSelf();return START_NOT_STICKY
         }
-        task?.cancel(false)
-        task=executor.scheduleWithFixedDelay({ runCatching { CountPoller.poll(applicationContext) } },0,NotificationPolling.interval(this),TimeUnit.MILLISECONDS)
+        if(task == null || task?.isDone == true || taskPeriod != period) {
+            task?.cancel(false)
+            taskPeriod = period
+            task=executor.scheduleWithFixedDelay({ runCatching { CountPoller.poll(applicationContext) } },0,period,TimeUnit.MILLISECONDS)
+        }
         return START_STICKY
     }
     override fun onDestroy() { task?.cancel(true);CountPoller.cancel();executor.shutdownNow();super.onDestroy() }

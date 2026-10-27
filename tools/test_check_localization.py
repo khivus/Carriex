@@ -45,6 +45,18 @@ class ReviewGateTest(unittest.TestCase):
         source.write_text("# Setup\nChanged instructions\n", encoding="utf-8")
         self.assertTrue(any("changed since translation review" in error for error in checker.check()[0]))
 
+    def test_root_english_readme_finds_translation_in_docs_and_checks_both_links(self):
+        source = checker.ROOT / "README.md"
+        source.write_text("# Setup\n[Русский](docs/README.ru.md)\n", encoding="utf-8")
+        translated = checker.ROOT / "docs/README.ru.md"
+        translated.parent.mkdir()
+        translated.write_text("# Настройка\n[English](../README.md)\n", encoding="utf-8")
+        checker.stamp_docs()
+        self.assertEqual([], checker.check()[0])
+        source.write_text("# Setup\n[Русский](README.ru.md)\n", encoding="utf-8")
+        checker.stamp_docs()
+        self.assertTrue(any("Broken local link in README.md" in error for error in checker.check()[0]))
+
 
 if __name__ == "__main__":
     unittest.main()

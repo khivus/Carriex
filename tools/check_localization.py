@@ -48,6 +48,15 @@ def docs(repo):
                   not any(part.startswith(".") or part in ("build", "node_modules") for part in p.relative_to(repo).parts))
 
 
+def translation_path(original, repo):
+    sibling = original.with_name(original.stem + ".ru.md")
+    # The server keeps only the English README and changelog at repository root.
+    moved = repo / "docs" / sibling.name
+    if original.parent == repo and original.name in ("README.md", "CHANGELOG.md") and moved.exists():
+        return moved
+    return sibling
+
+
 def code_blocks(text):
     return re.findall(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", text, re.M | re.S)
 
@@ -133,7 +142,7 @@ def stamp_docs():
         if not repo.is_dir():
             continue
         for original in docs(repo):
-            translated = original.with_name(original.stem + ".ru.md")
+            translated = translation_path(original, repo)
             if not translated.exists():
                 continue
             text = translated.read_text(encoding="utf-8")
@@ -186,7 +195,7 @@ def check():
         repositories.append(server)
     for repo in repositories:
         for original in docs(repo):
-            translated = original.with_name(original.stem + ".ru.md")
+            translated = translation_path(original, repo)
             if not translated.exists():
                 errors.append(f"Missing Russian documentation: {repo.name}/{original.relative_to(repo)}")
                 continue
@@ -199,12 +208,13 @@ def check():
                 errors.append(f"Fenced command/protocol examples differ: {translated}")
             if not re.search("[А-Яа-яЁё]", russian):
                 errors.append(f"No Russian text: {translated}")
-            for link in re.findall(r"\]\(([^)]+)\)", russian):
-                target = link.split("#")[0].strip("<>")
-                if not target or "://" in target or target.startswith("mailto:"):
-                    continue
-                if not (translated.parent / target).exists():
-                    errors.append(f"Broken local link in {translated.name}: {link}")
+            for document, content in ((original, english), (translated, russian)):
+                for link in re.findall(r"\]\(([^)]+)\)", content):
+                    target = link.split("#")[0].strip("<>")
+                    if not target or "://" in target or target.startswith("mailto:"):
+                        continue
+                    if not (document.parent / target).exists():
+                        errors.append(f"Broken local link in {document.name}: {link}")
             docrows.append((f"{repo.name}/{original.relative_to(repo)}", english, russian))
     return errors, rows, docrows
 

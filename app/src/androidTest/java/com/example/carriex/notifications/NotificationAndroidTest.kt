@@ -1,12 +1,20 @@
 package com.example.carriex.notifications
 
 import android.app.NotificationManager
+import android.app.ActivityManager
 import android.app.job.JobScheduler
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Rect
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.Build
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.View
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.Espresso.pressBack
@@ -31,6 +39,7 @@ import org.junit.Before
 import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.Assume.assumeTrue
 import java.io.File
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
@@ -171,6 +180,133 @@ class NotificationAndroidTest {
         preferences.edit().putLong("notification_interval", 1_800_000L).commit()
         NotificationPolling.schedule(context)
         assertEquals(1_800_000L, scheduler.getPendingJob(NotificationPolling.JOB_ID)!!.intervalMillis)
+    }
+
+    private fun awaitCondition(detail: String, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
+        while(!condition()) {
+            assertTrue(detail, System.nanoTime() < deadline)
+            Thread.sleep(30)
+        }
+    }
+
+    private fun pollingStatus() = context.getSystemService(NotificationManager::class.java).activeNotifications
+        .singleOrNull { it.id == NotificationPolling.SERVICE_ID && it.tag == null }
+
+    @Test fun repeatedStartsKeepVisibleStatusAndChangedIntervalUpdatesItsText() {
+        NotificationPolling.appVisible = true
+        preferences.edit().putLong("notification_interval", 1000L).commit()
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitCondition("Fast polling posts its status") { pollingStatus() != null }
+            val originalPost = pollingStatus()!!.postTime
+            instrumentation.runOnMainSync { NotificationPolling.schedule(context) }
+            instrumentation.waitForIdleSync()
+            Thread.sleep(250)
+            assertEquals("An unchanged start must not post the notification again", originalPost, pollingStatus()!!.postTime)
+            preferences.edit().putLong("notification_interval", 12_345L).commit()
+            instrumentation.runOnMainSync { NotificationPolling.schedule(context) }
+            val expected = com.example.carriex.localization.LocalizedFormat.interval(
+                com.example.carriex.localization.AppLanguage.context(context), 12_345L)
+            awaitCondition("A visible status reflects the new interval") {
+                pollingStatus()?.notification?.extras?.getCharSequence(android.app.Notification.EXTRA_TEXT)?.contains(expected) == true
+            }
+            assertTrue(pollingStatus()!!.notification.flags and android.app.Notification.FLAG_FOREGROUND_SERVICE != 0)
+        }
+    }
+
+    private fun swipeAwayPollingStatus() {
+        val automation = instrumentation.uiAutomation
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
+        assertTrue(automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS))
+        val title = pollingStatus()!!.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString()
+        val bounds = Rect()
+        fun findTitle(node: android.view.accessibility.AccessibilityNodeInfo): android.view.accessibility.AccessibilityNodeInfo? {
+            if(node.isVisibleToUser && node.text?.toString() == title) return node
+            for(index in 0 until node.childCount) {
+                node.getChild(index)?.let { child -> findTitle(child)?.let { return it } }
+            }
+            return null
+        }
+        try {
+            awaitCondition("The polling notification is visible in the system shade: $title") {
+                val roots = (automation.windows.mapNotNull { it.root } + listOfNotNull(automation.rootInActiveWindow))
+                val node = roots.firstNotNullOfOrNull(::findTitle)
+                node?.getBoundsInScreen(bounds)
+                if(node == null) roots.forEach { root ->
+                    root.findAccessibilityNodeInfosByViewId("com.android.systemui:id/notification_stack_scroller")
+                        .forEach { it.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) }
+                }
+                node != null && !bounds.isEmpty
+            }
+        } catch(error: AssertionError) {
+            val tree = StringBuilder()
+            fun describe(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
+                tree.append(" ".repeat(depth)).append(node.packageName).append('/').append(node.className)
+                    .append(" id=").append(node.viewIdResourceName).append(" text=").append(node.text)
+                    .append(" desc=").append(node.contentDescription).append(" visible=").append(node.isVisibleToUser).append('\n')
+                for(index in 0 until node.childCount) node.getChild(index)?.let { describe(it, depth + 1) }
+            }
+            (automation.windows.mapNotNull { it.root } + listOfNotNull(automation.rootInActiveWindow))
+                .forEach { describe(it, 0) }
+            File(context.filesDir, "notification-dismiss-shade.txt").writeText(tree.toString())
+            val bitmap = automation.takeScreenshot()
+            File(context.filesDir, "notification-dismiss-shade.png").outputStream().use {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
+            throw error
+        }
+        val width = context.resources.displayMetrics.widthPixels
+        val down = SystemClock.uptimeMillis()
+        for(step in 0..10) {
+            val action = when(step) { 0 -> MotionEvent.ACTION_DOWN; 10 -> MotionEvent.ACTION_UP; else -> MotionEvent.ACTION_MOVE }
+            val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
+                width * (0.25f + step * 0.072f), bounds.centerY().toFloat(), 0)
+            event.source = InputDevice.SOURCE_TOUCHSCREEN
+            try { assertTrue(automation.injectInputEvent(event, true)) } finally { event.recycle() }
+            Thread.sleep(25)
+        }
+        awaitCondition("User dismissal hides the status notification") { pollingStatus() == null }
+        assertTrue(automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK))
+        instrumentation.waitForIdleSync()
+    }
+
+    @Test fun dismissedPollingStatusStaysHiddenOnReopenWhileChecksContinueAndReturnsOnRealRestart() {
+        assumeTrue("Android 14+ lets users dismiss foreground notifications", Build.VERSION.SDK_INT >= 34)
+        preferences.edit().putLong("notification_interval", 1000L).commit()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            awaitCondition("A real service start posts its mandatory status") { pollingStatus() != null }
+            swipeAwayPollingStatus()
+            val before = paths.count { it.endsWith("/count") }
+            scenario.moveToState(Lifecycle.State.CREATED)
+            awaitCondition("Counts continue after the status is dismissed") { paths.count { it.endsWith("/count") } > before }
+            awaitAlert(true)
+            assertNull(pollingStatus())
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            instrumentation.waitForIdleSync()
+            scenario.recreate()
+            instrumentation.waitForIdleSync()
+            Thread.sleep(300)
+            assertNull("Reopening and recreating the app must not restore dismissed status", pollingStatus())
+            preferences.edit().putLong("notification_interval", 2000L).commit()
+            instrumentation.runOnMainSync { NotificationPolling.schedule(context) }
+            instrumentation.waitForIdleSync()
+            Thread.sleep(300)
+            assertNull("Changing the interval must keep a dismissed status hidden", pollingStatus())
+            preferences.edit().putLong("notification_interval", 900_000L).commit()
+            instrumentation.runOnMainSync { NotificationPolling.schedule(context) }
+            awaitCondition("Switching to periodic checks stops the foreground service") {
+                @Suppress("DEPRECATION")
+                context.getSystemService(ActivityManager::class.java).getRunningServices(Int.MAX_VALUE)
+                    .none { it.service.className == FastCountService::class.java.name }
+            }
+            preferences.edit().putLong("notification_interval", 1000L).commit()
+            instrumentation.runOnMainSync { NotificationPolling.schedule(context) }
+            awaitCondition("A new service instance must post its status again") { pollingStatus() != null }
+        }
     }
 
     private fun navigate(title: String) {

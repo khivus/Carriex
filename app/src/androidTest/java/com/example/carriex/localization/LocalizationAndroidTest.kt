@@ -21,6 +21,17 @@ import java.util.Locale
 
 @RunWith(AndroidJUnit4::class)
 class LocalizationAndroidTest {
+    private fun setTestLanguage(tag: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        instrumentation.runOnMainSync {
+            // A fixture may run before any AppCompat activity exists.
+            if(android.os.Build.VERSION.SDK_INT >= 33)
+                context.getSystemService(android.app.LocaleManager::class.java).applicationLocales = android.os.LocaleList.forLanguageTags(tag)
+            else AppLanguage.set(context, tag)
+        }
+    }
+
     @Test fun switchLanguagesAndKeepCurrentSettingsPage() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -33,7 +44,7 @@ class LocalizationAndroidTest {
                 java.io.File(directory, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
             } finally { bitmap.recycle() }
         }
-        instrumentation.runOnMainSync { AppLanguage.set(context, "en") }
+        setTestLanguage("en")
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 onView(withContentDescription("Open navigation menu")).perform(click())
@@ -67,7 +78,7 @@ class LocalizationAndroidTest {
                 onView(withText("Language")).check(matches(isDisplayed()))
             }
         } finally {
-            instrumentation.runOnMainSync { AppLanguage.set(context, original) }
+            setTestLanguage(original)
         }
     }
 

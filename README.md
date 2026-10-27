@@ -8,7 +8,7 @@ documentation comparison, paired emulator screenshots, and the acceptance checkl
 
 ## Connect and chat
 
-1. On **Servers**, tap the floating **+** at the bottom right, then **Scan server QR** or **Import pairing text**. Start the relay using `start-server.bat` or paired Docker; see `Carriex-server/PAIRING.md`. Review the server name, address, and trusted key before saving. Use pairing information obtained from the owner through a trusted channel.
+1. On **Servers**, tap the floating **+** at the bottom right, then **Scan server QR** or **Import pairing text**. Start the relay using `start-server.bat` or paired Docker; see [server pairing](../Carriex-server/docs/PAIRING.md). Review the server name, address, and trusted key before saving. Use pairing information obtained from the owner through a trusted channel.
 2. **Servers** shows compact saved-server cards. Tap a card to browse its saved chats; use the always-visible **Connect** / **Disconnect** and **View messages** buttons. **View messages** opens saved history without connecting. Startup settings, server details and forgetting remain in the three-dot menu. Startup selection is exclusive. Connection setup keeps saved history and the composer available; sending becomes available after authentication.
 3. **My ID (short ID)** at the top of the drawer shows this installation's public device ID and QR, with copy/share actions. Each installation uses a non-exportable Android Keystore P-256 key, preferring StrongBox where available.
 4. From a server's chats, tap the floating pencil button to expand **Scan QR** and **Import text**, then choose an optional contact name. In a conversation, use the top-right three-dot menu for contact details, verification, rename, remove, block, and secure-session restart. **Remove chat** deletes local messages and the draft without blocking the contact; secure-session state and message IDs are retained to prevent old redeliveries restoring deleted content. The chat list has a **Requests** button for both message requests and group invitations; its three-dot menu contains connection controls. **Chat security** and blocked devices are under **Settings > Privacy**.
@@ -47,9 +47,15 @@ rights cannot be transferred. Each join, leave or removal automatically refreshe
 every current member's sender and signing keys; an offline member does this on
 return before sending. Group messages use one signed sender-key ciphertext,
 with fresh keys distributed through encrypted one-to-one sessions. Update both
-the relay and app. See [group protocol and limits](../Carriex-server/GROUPS.md).
+the relay and app. See [group protocol and limits](../Carriex-server/docs/GROUPS.md).
 
-Leaving Carriex closes the live messaging connection. Background notification checks fetch only pending counts and an arrival revision using a cached, encrypted, restricted credential. They never download/decrypt/acknowledge messages. Opening the app restores its active connection and page; tapping a message notification opens its server. **Check now** and last-check details are in notification settings. Update the relay for this feature; see [notification protocol, scheduling, and limitations](../Carriex-server/NOTIFICATIONS.md).
+Leaving Carriex closes the live messaging connection. Background notification checks fetch only pending counts and an arrival revision using a cached, encrypted, restricted credential. They never download/decrypt/acknowledge messages. Opening the app restores its active connection and page; tapping a message notification opens its server. **Check now** and last-check details are in notification settings. Update the relay for this feature; see [notification protocol, scheduling, and limitations](../Carriex-server/docs/NOTIFICATIONS.md).
+
+On Android 14+, you can swipe away the fast-check service's status notification.
+Checks and message alerts continue. Reopening Carriex keeps that status hidden;
+it returns after a real service restart. Visible status text follows interval and
+language changes without restoring a dismissed notification. Intervals of at
+least 15 minutes use periodic jobs without this service notification.
 
 Send using **Send**, the keyboard's Send action, or **Enter** on a hardware keyboard. **Shift+Enter** inserts a new line. Message status updates preserve the conversation's scroll position and the composer's focus and selection. New messages scroll to the bottom when you are already there; sending your own message also scrolls to it.
 
@@ -104,7 +110,7 @@ by the relay. Saved history remains readable. These protections depend on clean
 devices and key deletion; saved history, skipped keys and restored old database
 snapshots remain relevant risks. This is not post-quantum or independently audited.
 See the server's
-[X3DH protocol and limits](../Carriex-server/X3DH.md).
+[X3DH protocol and limits](../Carriex-server/docs/X3DH.md).
 
 Replace [`icon.png`](icon.png) in the Android repository root:
 `D:\Uni\Carriex\Project\Carriex\icon.png`. Use a square PNG, preferably 512 x 512

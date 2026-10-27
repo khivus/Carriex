@@ -31,6 +31,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     )
     var savedServers = emptyList<PairedServer>()
         private set
+    var startupSuggestion: PairedServer? = null
+        private set
     var autoConnectUrl: String? = null
         private set
     var activeServer: PairedServer? = null
@@ -99,8 +101,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         catch (e: Exception) { error = "Unable to read saved servers: ${e.message}" }
     }
 
+    fun dismissStartupSuggestion() { startupSuggestion = null; changed() }
+
     fun setAutoConnect(server: PairedServer, enabled: Boolean) {
         try {
+            preferences.edit().putBoolean("startup_suggestion_seen", true).commit()
+            startupSuggestion = null
             serverStore.setAutoConnect(if (enabled) server.url else autoConnectUrl?.takeUnless { it == server.url })
             refreshServers()
             error = null
@@ -207,7 +213,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     init {
         refreshServers()
         savedServers.forEach(::loadSaved)
-        if(preferences.getBoolean("setup_completed", false)) savedServers.firstOrNull { it.url == autoConnectUrl }?.let(::connect)
+        if(com.example.carriex.ui.chat.SetupProgress.completed(preferences)) savedServers.firstOrNull { it.url == autoConnectUrl }?.let(::connect)
     }
 
     fun connect(server: PairedServer, navigate: Boolean = true) {
@@ -256,7 +262,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val chats = chatsFor(chatScope)
                     transport = candidate
                     candidate.onConnectionStatusChanged = { status -> handler.post {
-                        if (attempt == generation && connectionStatus != status) { connectionStatus = status; changed() }
+                        if (attempt == generation && connectionStatus != status) {
+                            connectionStatus = status
+                            if(status == ServerTransport.ConnectionStatus.CONNECTED &&
+                                !preferences.getBoolean("startup_suggestion_seen", false)) {
+                                preferences.edit().putBoolean("startup_suggestion_seen", true).commit()
+                                if(autoConnectUrl == null) startupSuggestion = server
+                            }
+                            changed()
+                        }
                     } }
                     val activeService = MessagingService(userId, device, candidate, chatStore, chatScope,
                         contacts = { preferences.getStringSet("contacts_$chatScope",emptySet()).orEmpty().toSet() },

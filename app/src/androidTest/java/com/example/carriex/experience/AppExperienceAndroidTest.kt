@@ -28,13 +28,55 @@ class AppExperienceAndroidTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private val prefs get() = context.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
+    private lateinit var originalPreferences: Map<String, *>
+    @org.junit.Before fun preservePreferences() { originalPreferences = prefs.all }
+    @org.junit.After fun restorePreferences() {
+        val edit = prefs.edit().clear()
+        originalPreferences.forEach { (key, value) -> when(value) {
+            is String -> edit.putString(key, value)
+            is Boolean -> edit.putBoolean(key, value)
+            is Int -> edit.putInt(key, value)
+            is Long -> edit.putLong(key, value)
+            is Float -> edit.putFloat(key, value)
+            is Set<*> -> edit.putStringSet(key, value.filterIsInstance<String>().toSet())
+        } }
+        edit.commit()
+    }
     private fun descendants(view: View): List<View> = listOf(view) + if(view is ViewGroup)
         (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
+
+    @Test fun updateSetupRunsOnceForExistingUsersAndResumesTheChosenStep() {
+        prefs.edit().clear().putBoolean("setup_completed", true).putInt("setup_step", 2).commit()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            fun button(activity: MainActivity, id: Int) = descendants(activity.window.decorView).filterIsInstance<TextView>()
+                .single { it.isShown && it.text.toString() == activity.getString(id) }
+            scenario.onActivity { activity ->
+                button(activity, R.string.language)
+                assertFalse(prefs.getBoolean("setup_completed", true))
+                assertEquals(0, prefs.getInt("setup_step", -1))
+                button(activity, R.string.ui_continue).performClick()
+            }
+            scenario.recreate()
+            scenario.onActivity { activity ->
+                button(activity, R.string.ui_setup_appearance)
+                assertEquals(1, prefs.getInt("setup_step", -1))
+                button(activity, R.string.ui_skip).performClick()
+                button(activity, R.string.ui_finish_setup).performClick()
+                assertEquals(com.example.carriex.ui.chat.SetupProgress.REVISION, prefs.getInt("setup_revision", 0))
+            }
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario -> scenario.onActivity { activity ->
+            assertTrue(com.example.carriex.ui.chat.SetupProgress.completed(prefs))
+            assertTrue(descendants(activity.window.decorView).filterIsInstance<TextView>().any {
+                it.isShown && it.text.toString() == activity.getString(R.string.ui_scan_server_qr)
+            })
+        } }
+    }
 
     @Test fun updateScreenShowsNotesAndSkipDismissesExactlyOneVersion() {
         val setup = prefs.getBoolean("setup_completed", false)
         val skipped = prefs.getString("skipped_update", null)
-        prefs.edit().putBoolean("setup_completed", true).commit()
+        prefs.edit().putBoolean("setup_completed", true).putInt("setup_revision", com.example.carriex.ui.chat.SetupProgress.REVISION).putBoolean("startup_suggestion_seen", true).commit()
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 lateinit var updates: com.example.carriex.updates.UpdateViewModel
@@ -142,7 +184,7 @@ class AppExperienceAndroidTest {
         val originalSetup = prefs.getBoolean("setup_completed", false)
         val originalLanguage = AppLanguage.selected(context)
         val peer = "b".repeat(64)
-        prefs.edit().putBoolean("setup_completed", true).commit()
+        prefs.edit().putBoolean("setup_completed", true).putInt("setup_revision", com.example.carriex.ui.chat.SetupProgress.REVISION).putBoolean("startup_suggestion_seen", true).commit()
         instrumentation.runOnMainSync { AppLanguage.set(context, "en") }
         store.save(server)
         ChatStore(context).use { it.addIncoming(server.fingerprint, Message(peer, AndroidDeviceIdentity.load().userId,

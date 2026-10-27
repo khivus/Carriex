@@ -609,4 +609,12 @@
     <string name="ui_event_own_blocked">"You blocked this chat."</string>
     <string name="ui_event_own_keys_removed">"You removed the encryption keys for this chat."</string>
     <string name="ui_event_own_restarted">"You restarted the secure session."</string>
+    <string name="ui_startup_suggestion_title">"Connect here on startup?"</string>
+    <string name="ui_startup_suggestion_detail">"You connected to %1$s. Open this server automatically when Carriex starts?"</string>
+    <string name="ui_enable_startup_connection">"Enable autoconnect"</string>
+    <string name="ui_not_now">"Not now"</string>
+    <string name="ui_servers_check_detail">"Choose which saved servers can notify you. This applies to background checks and live message alerts."</string>
+    <string name="ui_notification_check_status">"Check status"</string>
+    <string name="ui_notification_check_detail">"Run a check now and review the last result for each enabled server."</string>
+    <string name="ui_no_server_checks">"No servers selected for notifications."</string>
 </resources>

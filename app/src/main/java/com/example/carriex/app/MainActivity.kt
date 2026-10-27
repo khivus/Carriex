@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.example.carriex.ui.chat.SetupProgress.prepare(NotificationPolling.preferences(this))
         com.example.carriex.localization.AppLanguage.restore(this)
         delegate.localNightMode = com.example.carriex.ui.chat.Appearance.nightMode(this)
         setTheme(com.example.carriex.ui.chat.Appearance.theme(this))
@@ -82,7 +83,7 @@ class MainActivity : AppCompatActivity() {
         CountPoller.cancel()
         NotificationPolling.clearAlerts(this)
         ViewModelProvider(this)[ChatViewModel::class.java].onForeground()
-        if(NotificationPolling.preferences(this).getBoolean("setup_completed", false)) runCatching { NotificationPolling.schedule(this) }
+        if(com.example.carriex.ui.chat.SetupProgress.completed(NotificationPolling.preferences(this))) runCatching { NotificationPolling.schedule(this) }
     }
 
     override fun onStop() {

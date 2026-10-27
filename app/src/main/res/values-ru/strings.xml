@@ -609,4 +609,12 @@
     <string name="ui_event_own_blocked">"Вы заблокировали этот чат."</string>
     <string name="ui_event_own_keys_removed">"Вы удалили ключи шифрования этого чата."</string>
     <string name="ui_event_own_restarted">"Вы начали новый защищённый сеанс."</string>
+    <string name="ui_startup_suggestion_title">"Подключаться сюда при запуске?"</string>
+    <string name="ui_startup_suggestion_detail">"Вы подключились к %1$s. Подключаться к этому серверу автоматически при запуске Carriex?"</string>
+    <string name="ui_enable_startup_connection">"Включить автоподключение"</string>
+    <string name="ui_not_now">"Не сейчас"</string>
+    <string name="ui_servers_check_detail">"Выберите серверы, от которых нужны уведомления. Настройка действует для фоновых проверок и сообщений через активное подключение."</string>
+    <string name="ui_notification_check_status">"Состояние проверок"</string>
+    <string name="ui_notification_check_detail">"Выполните проверку сейчас и просмотрите последний результат для каждого включённого сервера."</string>
+    <string name="ui_no_server_checks">"Ни один сервер не выбран для уведомлений."</string>
 </resources>

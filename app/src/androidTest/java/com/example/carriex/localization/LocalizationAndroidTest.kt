@@ -23,7 +23,7 @@ import java.util.Locale
 class LocalizationAndroidTest {
     @org.junit.Before fun finishSetupForExistingUserFixtures() {
         InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
-            .edit().putBoolean("setup_completed", true).commit()
+            .edit().putBoolean("setup_completed", true).putInt("setup_revision", com.example.carriex.ui.chat.SetupProgress.REVISION).putBoolean("startup_suggestion_seen", true).commit()
     }
     private fun setTestLanguage(tag: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

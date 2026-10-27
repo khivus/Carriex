@@ -130,7 +130,8 @@ class ChatScreen : Fragment() {
     private var permissionStatus: TextView? = null
     private var privacyServer: String? = null
     private val setupPreferences get() = NotificationPolling.preferences(requireContext())
-    private val needsSetup get() = !setupPreferences.getBoolean("setup_completed", false)
+    private val needsSetup get() = !SetupProgress.completed(setupPreferences)
+    private var startupSuggestionDialog: androidx.appcompat.app.AlertDialog? = null
     private var settingsVisible = false
     private var settingsBuilt = false
     private var settingsSection: String? = null
@@ -342,6 +343,7 @@ class ChatScreen : Fragment() {
             renderedUpdate = null; settingsBuilt = false; messageList = null; renderedScope = null
         }
         toolbar.visibility = View.VISIBLE
+        showStartupSuggestion()
         drawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED)
         root.post { if(view != null) reportVisibleMessages() }
         refreshInviteConfirmation?.invoke()
@@ -528,10 +530,7 @@ class ChatScreen : Fragment() {
             setOnMenuItemClickListener { item ->
                 when(item.itemId) {
                     3 -> model.setAutoConnect(server, model.autoConnectUrl != server.url)
-                    4 -> MaterialAlertDialogBuilder(requireContext()).setTitle(server.name)
-                        .setMessage(getString(R.string.ui_n_ntrusted_server_key_n, server.url, server.fingerprint.chunked(8).joinToString(" ")) +
-                            (compatibilityStatus(server)?.let { "\n\n$it" } ?: ""))
-                        .setPositiveButton(getString(R.string.ui_done), null).show()
+                    4 -> showServerDetails(server)
                     5 -> MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_forget, server.name))
                         .setMessage(getString(R.string.ui_this_removes_its_saved_address_and_trusted_key_saved_messages_stay_on_))
                         .setNegativeButton(getString(R.string.ui_cancel), null).setPositiveButton(getString(R.string.ui_forget_03d5d8)) { _, _ ->
@@ -543,6 +542,28 @@ class ChatScreen : Fragment() {
             }
             show()
         }
+    }
+
+    private fun showServerDetails(server: PairedServer) {
+        MaterialAlertDialogBuilder(requireContext()).setTitle(server.name)
+            .setMessage(getString(R.string.ui_n_ntrusted_server_key_n, server.url, server.fingerprint.chunked(8).joinToString(" ")) +
+                (compatibilityStatus(server)?.let { "\n\n$it" } ?: ""))
+            .setPositiveButton(getString(R.string.ui_done), null).show()
+    }
+
+    private fun showStartupSuggestion() {
+        val server = model.startupSuggestion ?: return
+        if(startupSuggestionDialog != null || !isResumed || pairingDialog?.isShowing == true) return
+        startupSuggestionDialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(getString(R.string.ui_startup_suggestion_title))
+            .setMessage(getString(R.string.ui_startup_suggestion_detail, server.name))
+            .setPositiveButton(getString(R.string.ui_enable_startup_connection)) { _, _ -> model.setAutoConnect(server, true) }
+            .setNegativeButton(getString(R.string.ui_not_now)) { _, _ -> model.dismissStartupSuggestion() }
+            .create().also { dialog ->
+                dialog.setOnCancelListener { model.dismissStartupSuggestion() }
+                dialog.setOnDismissListener { startupSuggestionDialog = null }
+                dialog.show()
+            }
     }
 
     private fun scanServer() {
@@ -670,7 +691,9 @@ class ChatScreen : Fragment() {
             else if(current && model.connected) getString(R.string.ui_disconnect) else getString(R.string.ui_connect)
         val entries: List<Triple<Int, String, Int>> = when(toolbarMenuMode) {
             1 -> listOf(
-                Triple(203, connection, R.drawable.ic_nav_connection))
+                Triple(203, connection, R.drawable.ic_nav_connection),
+                Triple(204, getString(R.string.ui_connect_on_app_startup), R.drawable.ic_nav_connection),
+                Triple(205, getString(R.string.ui_server_details), R.drawable.ic_nav_info))
             2 -> listOf(
                 Triple(101, getString(R.string.ui_contact_id), R.drawable.ic_nav_person),
                 Triple(102, getString(R.string.ui_verify_friend_s_id), R.drawable.ic_scan_qr),
@@ -694,7 +717,10 @@ class ChatScreen : Fragment() {
         PopupMenu(requireContext(), anchor).apply {
             setForceShowIcon(true)
             entries.forEachIndexed { order, (id, title, resource) ->
-                menu.add(0, id, order, title).icon = menuIcon(resource)
+                menu.add(0, id, order, title).apply {
+                    icon = menuIcon(resource)
+                    if(id == 204) { isCheckable = true; isChecked = model.autoConnectUrl == model.viewedServer?.url }
+                }
             }
             setOnMenuItemClickListener { handlePageOption(it.itemId) }
             show()
@@ -739,6 +765,8 @@ class ChatScreen : Fragment() {
                     }.show()
             }
             201 -> showRequests()
+            204 -> model.viewedServer?.let { model.setAutoConnect(it, model.autoConnectUrl != it.url) }
+            205 -> model.viewedServer?.let(::showServerDetails)
             203 -> if(model.activeServer?.url == model.viewedServer?.url && (model.connected || model.connecting)) model.disconnect()
                 else model.viewedServer?.let { model.connect(it) }
             else -> {
@@ -884,7 +912,7 @@ class ChatScreen : Fragment() {
                 addAction(getString(R.string.ui_skip)) { advanceSetup() }
                 addAction(getString(R.string.ui_continue)) { advanceSetup() }
             } else addAction(getString(R.string.ui_finish_setup)) {
-                setupPreferences.edit().putBoolean("setup_completed", true).remove("setup_step").commit()
+                SetupProgress.finish(setupPreferences)
                 settingsBuilt = false; setupBuiltStep = -1; render()
                 scheduleNotifications()
                 model.savedServers.firstOrNull { it.url == model.autoConnectUrl }?.let { model.connect(it) }
@@ -1072,22 +1100,21 @@ class ChatScreen : Fragment() {
             else MessageRequestNotifications.clearGroupAlerts(requireContext())
         }
         backgroundSettings(content)
-        content.addView(label(getString(R.string.ui_servers_to_check), 18f).apply { setTypeface(typeface, Typeface.BOLD) })
-        if(model.savedServers.isEmpty()) content.addView(label(getString(R.string.ui_add_a_server_from_the_servers_view_first), 14f, true))
+        val serversCard = settingCard(content, getString(R.string.ui_servers_to_check), getString(R.string.ui_servers_check_detail))
+        if(model.savedServers.isEmpty()) serversCard.addView(label(getString(R.string.ui_add_a_server_from_the_servers_view_first), 14f, true))
         model.savedServers.forEach { server ->
-            content.addView(MaterialCheckBox(context).apply {
-                text = server.name
-                isChecked = prefs.getBoolean("notify_${server.fingerprint}", true)
-                setOnCheckedChangeListener { _, enabled ->
-                    prefs.edit().putBoolean("notify_${server.fingerprint}", enabled).apply()
-                    if(!enabled) androidx.core.app.NotificationManagerCompat.from(context).cancel(server.fingerprint, 1)
-                    scheduleNotifications(); refreshNotificationStatus()
+            toggle(content, server.name, server.url, "notify_${server.fingerprint}", true) { enabled ->
+                if(!enabled) androidx.core.app.NotificationManagerCompat.from(context).apply {
+                    cancel(server.fingerprint, 1)
+                    cancel("live:${server.fingerprint}", NotificationPolling.LIVE_MESSAGE_ID)
                 }
-            })
+                scheduleNotifications(); refreshNotificationStatus()
+            }
         }
         androidNotificationSettings(content)
-        settingsStatus = label("", 14f, true).also(content::addView)
-        content.addView(button(getString(R.string.ui_check_now)) { }.apply {
+        val statusCard = settingCard(content, getString(R.string.ui_notification_check_status), getString(R.string.ui_notification_check_detail))
+        settingsStatus = label("", 14f, true).also(statusCard::addView)
+        statusCard.addView(button(getString(R.string.ui_check_now)) { }.apply {
             setOnClickListener {
                 if(!NotificationPolling.enabled(context) || !NotificationPolling.permitted(context)) {
                     Toast.makeText(context, getString(R.string.ui_enable_checks_and_allow_notifications_first), Toast.LENGTH_SHORT).show()
@@ -1175,15 +1202,13 @@ class ChatScreen : Fragment() {
             setTextColor(if(NotificationPolling.permitted(context)) 0xff2e7d32.toInt() else color(androidx.appcompat.R.attr.colorError))
         }
         settingsStatus?.text = buildString {
-            append(if(NotificationPolling.enabled(context)) getString(R.string.ui_checks_enabled) else getString(R.string.ui_checks_disabled))
-            append(" · ${LocalizedFormat.interval(requireContext(), NotificationPolling.interval(context))}\n")
-            append(if(NotificationPolling.permitted(context)) getString(R.string.ui_notifications_allowed) else getString(R.string.ui_notification_permission_needed))
-            append(if(optimized) getString(R.string.ui_battery_optimized) else getString(R.string.ui_battery_exemption_enabled))
-            append(getString(R.string.ui_ntiming_is_best_effort_force_stopping_carriex_stops_checks_until_you_o))
+            val servers = NotificationPolling.servers(context)
+            if(servers.isEmpty()) append(getString(R.string.ui_no_server_checks))
             state.getString("scheduler_error", null)?.let { append(getString(R.string.ui_nscheduling, UiErrors.text(context, it))) }
             NotificationPolling.servers(context).forEach { server ->
                 val checked = state.getLong("checked_${server.fingerprint}", 0)
-                append("\n\n${server.name}: ")
+                if(isNotEmpty()) append("\n\n")
+                append("${server.name}: ")
                 if(checked == 0L) append(getString(R.string.ui_not_checked_yet)) else {
                     append(getString(R.string.ui_0_pending, state.getInt("count_${server.fingerprint}", 0)))
                     append(android.text.format.DateUtils.getRelativeTimeSpanString(checked))
@@ -1213,6 +1238,7 @@ class ChatScreen : Fragment() {
     override fun onResume() {
         super.onResume()
         if(::root.isInitialized) {
+            if(!needsSetup && !updates.visible) showStartupSuggestion()
             refreshNotificationStatus()
             root.post { if(view != null) reportVisibleMessages() }
         }
@@ -2000,6 +2026,7 @@ class ChatScreen : Fragment() {
     }
 
     override fun onDestroyView() {
+        startupSuggestionDialog?.dismiss(); startupSuggestionDialog = null
         pairingDialog?.dismiss()
         pairingDialog = null
         model.onStateChanged = null

@@ -75,7 +75,7 @@ class ServerConnectionAndroidTest {
     private val preferences get() = instrumentation.targetContext.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
 
     @Before fun allowMessageRequestNotifications() {
-        preferences.edit().putBoolean("setup_completed", true).commit()
+        preferences.edit().putBoolean("setup_completed", true).putInt("setup_revision", com.example.carriex.ui.chat.SetupProgress.REVISION).putBoolean("startup_suggestion_seen", true).commit()
         if(Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.grantRuntimePermission(
             instrumentation.targetContext.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
     }
@@ -338,6 +338,57 @@ class ServerConnectionAndroidTest {
             val editor = preferences.edit()
             if (original == null) editor.remove("paired_servers_v1") else editor.putString("paired_servers_v1", original)
             assertTrue(editor.commit())
+        }
+    }
+
+    @Test fun firstSuccessfulConnectionSuggestsStartupOnceAndChatMenuHasStartupAndDetails() = withSavedServers { first, second, store ->
+        store.setAutoConnect(null)
+        preferences.edit().remove("startup_suggestion_seen").commit()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val model = model(scenario)
+            scenario.onActivity { model.connect(first.pairing) }
+            awaitState("first successful connection") { model.connectionStatus == ConnectionStatus.CONNECTED }
+            onView(withText("Connect here on startup?")).check(matches(isDisplayed()))
+            onView(withText("Not now")).perform(click())
+            assertNull(model.autoConnectUrl)
+            scenario.onActivity { model.connect(second.pairing) }
+            awaitState("second server connected") { model.connectionStatus == ConnectionStatus.CONNECTED && model.activeServer?.url == second.pairing.url }
+            onView(withText("Connect here on startup?")).check(doesNotExist())
+            onView(withContentDescription("More options")).perform(click())
+            onView(withText("Connect on app startup")).perform(click())
+            assertEquals(second.pairing.url, model.autoConnectUrl)
+            onView(withContentDescription("More options")).perform(click())
+            onView(withText("Server details")).perform(click())
+            onView(withText(org.hamcrest.Matchers.containsString(second.pairing.fingerprint.chunked(8).joinToString(" ")))).check(matches(isDisplayed()))
+            onView(withText("Done")).perform(click())
+            scenario.recreate()
+            assertEquals(second.pairing.url, model.autoConnectUrl)
+            onView(withText("Connect here on startup?")).check(doesNotExist())
+        }
+    }
+
+    @Test fun notificationServersAndManualCheckShareTheSettingsCardStyle() = withSavedServers { first, _, store ->
+        store.setAutoConnect(null)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            navigate("Settings")
+            onView(withText("Notifications")).perform(click())
+            scenario.onActivity { activity ->
+                val texts = descendants(activity.window.decorView).filterIsInstance<TextView>()
+                val toggle = descendants(activity.window.decorView)
+                    .filterIsInstance<com.google.android.material.switchmaterial.SwitchMaterial>()
+                    .single { it.contentDescription?.toString() == first.pairing.name }
+                val serverCard = toggle.parent as android.widget.LinearLayout
+                assertTrue(serverCard.background is android.graphics.drawable.GradientDrawable)
+                assertTrue(toggle.isChecked)
+                toggle.performClick()
+                assertFalse(preferences.getBoolean("notify_${first.pairing.fingerprint}", true))
+                val status = texts.single { it.text.toString() == "Check status" }.parent as android.widget.LinearLayout
+                assertTrue(status.background is android.graphics.drawable.GradientDrawable)
+                assertTrue((0 until status.childCount).map(status::getChildAt).filterIsInstance<android.widget.Button>()
+                    .any { it.text.toString() == "Check now" })
+            }
+            onView(withText("Check now")).perform(scrollTo())
+            captureNavigation("notification-check-cards")
         }
     }
 

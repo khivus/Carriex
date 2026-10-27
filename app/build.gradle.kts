@@ -94,8 +94,11 @@ android {
         applicationId = "com.example.carriex"
         minSdk = 24
         targetSdk = 37
-        versionCode = 10
-        versionName = "1.9"
+        versionCode = 11
+        versionName = "1.10"
+        val updateRepository = providers.gradleProperty("carriexUpdateRepository").getOrElse("khivus/Carriex")
+        require(updateRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
+        buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -132,6 +135,7 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
     // Both languages must be available offline when changing language in Settings.
     bundle {

@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
             isAppearanceLightNavigationBars = lightTheme
         }
         ViewCompat.requestApplyInsets(binding.root)
+        ViewModelProvider(this)[com.example.carriex.updates.UpdateViewModel::class.java].check()
         if (savedInstanceState == null) openNotification(intent)
     }
 

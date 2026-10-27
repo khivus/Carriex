@@ -174,3 +174,7 @@ Connection status is separate from message status. X3DH identity keys, prekeys,
 sessions and exact outgoing envelopes are encrypted locally and survive restart.
 These tests do not replace device checks for Wi-Fi/mobile switching or Android
 backgrounding.
+
+## App updates and server compatibility
+
+On launch, Carriex checks the public GitHub release and shows its changes with Download/Install, Dismiss and Skip this version. See [release preparation and compatibility](UPDATES.md). Private-repository checks are silent until a public release is available. Server versions and full/limited/incompatible status appear after checking the server.

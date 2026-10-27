@@ -108,6 +108,15 @@ class ChatScreen : Fragment() {
     }
     private var pairingDialog: androidx.appcompat.app.AlertDialog? = null
     private lateinit var model: ChatViewModel
+    private lateinit var updates: com.example.carriex.updates.UpdateViewModel
+    private var renderedUpdate: String? = null
+    private var skipUpdate = false
+    private var updateButton: MaterialButton? = null
+    private var updateError: TextView? = null
+    private var updateProgress: ProgressBar? = null
+    private val installPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if(Build.VERSION.SDK_INT < 26 || requireContext().packageManager.canRequestPackageInstalls()) installUpdate()
+    }
     private lateinit var root: LinearLayout
     private lateinit var drawer: DrawerLayout
     private lateinit var toolbar: MaterialToolbar
@@ -205,6 +214,7 @@ class ChatScreen : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         model = ViewModelProvider(requireActivity())[ChatViewModel::class.java]
+        updates = ViewModelProvider(requireActivity())[com.example.carriex.updates.UpdateViewModel::class.java]
         expectedScannedPeer = savedInstanceState?.getString("verify_contact_id")
         inviteScanGroup = savedInstanceState?.getString("invite_scan_group")
         inviteScanServer = savedInstanceState?.getString("invite_scan_server")
@@ -273,12 +283,14 @@ class ChatScreen : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         model.onStateChanged = { if (this.view != null) render() }
+        updates.onChanged = { if(this.view != null) { if(settingsSection == "updates") settingsBuilt = false; render() } }
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
             private var fromLeftEdge = false
             override fun handleOnBackStarted(backEvent: BackEventCompat) { fromLeftEdge = backEvent.swipeEdge == BackEventCompat.EDGE_LEFT }
             override fun handleOnBackCancelled() { fromLeftEdge = false }
             override fun handleOnBackPressed() {
                 if(needsSetup) { goBack(); return }
+                if(updates.visible) { updates.dismiss(skipUpdate); return }
                 val gesture = fromLeftEdge
                 fromLeftEdge = false
                 if (drawer.isDrawerOpen(GravityCompat.START)) drawer.closeDrawer(GravityCompat.START)
@@ -310,6 +322,14 @@ class ChatScreen : Fragment() {
             if(setupBuiltStep != step) { setupBuiltStep = step; root.removeAllViews(); setupPage(step) }
             refreshNotificationStatus()
             return
+        }
+        if(updates.visible) {
+            toolbar.visibility = View.GONE; pageActions.showMode(PageActions.NONE)
+            drawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
+            updatePage(); return
+        }
+        if(renderedUpdate != null) {
+            renderedUpdate = null; settingsBuilt = false; messageList = null; renderedScope = null
         }
         toolbar.visibility = View.VISIBLE
         drawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED)
@@ -354,6 +374,78 @@ class ChatScreen : Fragment() {
         renderedScope = scope
     }
 
+    private fun updatePage() {
+        val release = updates.release ?: return
+        if(renderedUpdate != release.tag) {
+            renderedUpdate = release.tag; skipUpdate = false
+            root.removeAllViews(); messageList = null; settingsBuilt = false
+            val notes = spacedList()
+            notes.addView(label(getString(R.string.ui_update_available, release.tag), 24f))
+            notes.addView(label(getString(R.string.ui_current_app_version, com.example.carriex.BuildConfig.VERSION_NAME), 14f, true))
+            notes.addView(label(release.notes.ifBlank { getString(R.string.ui_no_release_notes) }, 16f).apply { setTextIsSelectable(true) })
+            root.addView(ScrollView(requireContext()).apply { addView(notes) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            updateProgress = ProgressBar(requireContext(), null, android.R.attr.progressBarStyleHorizontal).also {
+                it.max = 100; root.addView(it, LinearLayout.LayoutParams(-1, dp(8)))
+            }
+            updateError = label("", 14f).apply { setTextColor(color(androidx.appcompat.R.attr.colorError)) }.also(root::addView)
+            root.addView(MaterialCheckBox(requireContext()).apply {
+                text = getString(R.string.ui_skip_version)
+                setOnCheckedChangeListener { _, checked -> skipUpdate = checked }
+            })
+            root.addView(actionRow().apply {
+                updateButton = addAction(getString(R.string.ui_download_update)) {
+                    if(updates.downloaded != null) installUpdate() else updates.download()
+                }
+                addAction(getString(R.string.ui_dismiss)) { updates.dismiss(skipUpdate) }
+            })
+        }
+        updateButton?.apply {
+            isEnabled = !updates.downloading
+            text = when { updates.downloading -> getString(R.string.ui_downloading_update, updates.progress)
+                updates.downloaded != null -> getString(R.string.ui_install_update)
+                else -> getString(R.string.ui_download_update) }
+        }
+        updateProgress?.apply { visibility = if(updates.downloading) View.VISIBLE else View.GONE; progress = updates.progress }
+        updateError?.apply { text = updates.error; visibility = if(updates.error == null) View.GONE else View.VISIBLE }
+    }
+
+    private fun installUpdate() {
+        val file = updates.downloaded ?: return
+        if(Build.VERSION.SDK_INT >= 26 && !requireContext().packageManager.canRequestPackageInstalls()) {
+            updateError?.apply { text = getString(R.string.ui_update_install_permission); visibility = View.VISIBLE }
+            installPermission.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${requireContext().packageName}")))
+            return
+        }
+        val uri = androidx.core.content.FileProvider.getUriForFile(requireContext(), updates.providerAuthority, file)
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }.onFailure {
+            updateError?.apply { text = getString(R.string.ui_update_download_unavailable); visibility = View.VISIBLE }
+        }
+    }
+
+    private fun compatibilityStatus(server: PairedServer): String? {
+        val status = model.compatibilityByServer[server.fingerprint] ?: return null
+        return getString(R.string.ui_server_version, status.version ?: getString(R.string.ui_version_unknown), getString(when(status.level) {
+            com.example.carriex.transport.ServerCompatibility.Level.FULL -> R.string.ui_compat_full
+            com.example.carriex.transport.ServerCompatibility.Level.LIMITED -> R.string.ui_compat_limited
+            else -> R.string.ui_compat_incompatible
+        }))
+    }
+
+    private fun compatibilityNotice(parent: LinearLayout, server: PairedServer) {
+        val status = model.compatibilityByServer[server.fingerprint] ?: return
+        if(status.level == com.example.carriex.transport.ServerCompatibility.Level.FULL) return
+        val detail = getString(when(status.action) {
+            com.example.carriex.transport.ServerCompatibility.Action.UPDATE_APP -> R.string.ui_compat_update_app
+            com.example.carriex.transport.ServerCompatibility.Action.OLDER_APP_OR_HOST -> R.string.ui_compat_older_app
+            else -> R.string.ui_compat_ask_host
+        })
+        val notice = settingCard(parent, compatibilityStatus(server).orEmpty(), detail)
+        if(status.level == com.example.carriex.transport.ServerCompatibility.Level.INCOMPATIBLE)
+            notice.contentDescription = getString(R.string.ui_server_incompatible_prompt, detail)
+        notice.addView(button(getString(R.string.ui_open_releases)) { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(updates.releasesUrl))) })
+    }
+
     private fun setup() {
         val content = column().apply { setPadding(0, 0, 0, dp(8)) }
         val scroll = ScrollView(requireContext()).apply { isFillViewport = true; clipToPadding = false; addView(content) }
@@ -390,6 +482,7 @@ class ChatScreen : Fragment() {
                 }, LinearLayout.LayoutParams(dp(48), dp(48)))
             })
             row.addView(label(server.url, 14f, true))
+            compatibilityStatus(server)?.let { row.addView(label(it, 14f, true)) }
             val status = model.statusFor(server)
             row.addView(label(UiErrors.text(requireContext(), status.label), 14f, status != com.example.carriex.transport.ServerTransport.ConnectionStatus.CONNECTED).apply {
                 if (status == com.example.carriex.transport.ServerTransport.ConnectionStatus.CONNECTED)
@@ -424,7 +517,8 @@ class ChatScreen : Fragment() {
                 when(item.itemId) {
                     3 -> model.setAutoConnect(server, model.autoConnectUrl != server.url)
                     4 -> MaterialAlertDialogBuilder(requireContext()).setTitle(server.name)
-                        .setMessage(getString(R.string.ui_n_ntrusted_server_key_n, server.url, server.fingerprint.chunked(8).joinToString(" ")))
+                        .setMessage(getString(R.string.ui_n_ntrusted_server_key_n, server.url, server.fingerprint.chunked(8).joinToString(" ")) +
+                            (compatibilityStatus(server)?.let { "\n\n$it" } ?: ""))
                         .setPositiveButton(getString(R.string.ui_done), null).show()
                     5 -> MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_forget, server.name))
                         .setMessage(getString(R.string.ui_this_removes_its_saved_address_and_trusted_key_saved_messages_stay_on_))
@@ -807,6 +901,7 @@ class ChatScreen : Fragment() {
         "Privacy" -> getString(R.string.ui_privacy)
         "Notifications" -> getString(R.string.ui_notifications)
         "Appearance" -> getString(R.string.ui_appearance)
+        "updates" -> getString(R.string.ui_updates)
         else -> getString(R.string.language)
     }
 
@@ -822,6 +917,18 @@ class ChatScreen : Fragment() {
             }
             "Privacy" -> privacySettings()
             "Notifications" -> notificationsSettings()
+            "updates" -> {
+                val content = settingsContent()
+                val card = settingCard(content, getString(R.string.ui_updates), getString(R.string.ui_current_app_version, com.example.carriex.BuildConfig.VERSION_NAME))
+                card.addView(label(when {
+                    updates.checking -> getString(R.string.ui_checking_updates)
+                    updates.error != null -> updates.error!!
+                    updates.checked -> getString(R.string.ui_no_updates)
+                    else -> getString(R.string.ui_updates_detail)
+                }, 14f, true))
+                card.addView(button(getString(R.string.ui_check_updates)) { updates.check(manual = true) }.apply { isEnabled = !updates.checking })
+                card.addView(button(getString(R.string.ui_open_releases)) { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(updates.releasesUrl))) })
+            }
             "Appearance" -> {
                 val content = settingsContent()
                 languageSelector(content)
@@ -845,7 +952,8 @@ class ChatScreen : Fragment() {
             else -> {
                 val content = settingsContent()
                 listOf("Chats" to getString(R.string.ui_message_requests_and_group_invitations), "Privacy" to getString(R.string.ui_chat_security_blocked_devices_and_read_status),
-                    "Notifications" to getString(R.string.ui_request_alerts_and_background_checks), "Appearance" to getString(R.string.ui_appearance_description)).forEach { (title, detail) ->
+                    "Notifications" to getString(R.string.ui_request_alerts_and_background_checks), "Appearance" to getString(R.string.ui_appearance_description),
+                    "updates" to getString(R.string.ui_updates_detail)).forEach { (title, detail) ->
                     settingCard(content, sectionTitle(title), detail).apply {
                         contentDescription = getString(R.string.ui_open_setting, sectionTitle(title))
                         isClickable = true; isFocusable = true
@@ -1249,6 +1357,7 @@ class ChatScreen : Fragment() {
         UiErrors.text(requireContext(), model.connectionStatus.label) else getString(R.string.ui_offline_saved_messages)
 
     private fun chats() {
+        model.viewedServer?.let { compatibilityNotice(root, it) }
         root.addView(actionRow().apply {
             addView(label(connectionText(), 14f, true).apply {
                 accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -1817,6 +1926,7 @@ class ChatScreen : Fragment() {
         pairingDialog?.dismiss()
         pairingDialog = null
         model.onStateChanged = null
+        updates.onChanged = null; renderedUpdate = null; updateButton = null; updateError = null; updateProgress = null
         composer = null
         messageScroll = null; messageList = null; connectionLabel = null; errorLabel = null; sendButton = null; conversationTitle = null
         messageViews.clear()

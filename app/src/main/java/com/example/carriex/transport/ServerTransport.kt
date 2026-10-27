@@ -28,6 +28,8 @@ class ServerTransport(
         .pingInterval(20, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).build(),
 ) {
+    @Volatile var serverCompatibility: ServerCompatibility? = null
+        private set
     private val base = baseUrl.toHttpUrl()
     init { DeviceAuthentication.requireSecureEndpoint(base) }
 
@@ -184,9 +186,12 @@ class ServerTransport(
         return try {
             client.newCall(Request.Builder().url(base.newBuilder().addPathSegment("health").build()).build())
                 .execute().use { response ->
-                    if (response.code != 200 || JSONObject(response.body!!.string()).optString("status") != "alive") {
+                    val health = JSONObject(response.body!!.string())
+                    if (response.code != 200 || health.optString("status") != "alive") {
                         throw IOException("This address did not return a Carriex health response")
                     }
+                    serverCompatibility = ServerCompatibility.parse(health, com.example.carriex.BuildConfig.VERSION_CODE)
+                    if(serverCompatibility?.level == ServerCompatibility.Level.INCOMPATIBLE) return false
                 }
             authentication.token()
             true

@@ -101,6 +101,8 @@ class ServerConnectionAndroidTest {
             .addSubjectAlternativeName("127.0.0.1").build()
         val pairing: PairedServer
         @Volatile var healthy = true
+        @Volatile var protocol = 3
+        val authenticationCount = AtomicInteger()
         val friend = DeviceIdentity(KeyPairGenerator.getInstance("EC").apply {
             initialize(ECGenParameterSpec("secp256r1"))
         }.generateKeyPair())
@@ -204,10 +206,14 @@ class ServerConnectionAndroidTest {
                     request.path == "/health" -> {
                         healthEntered.countDown()
                         holdHealth?.await(15, TimeUnit.SECONDS)
-                        if (healthy) json("{\"status\":\"alive\"}") else MockResponse().setResponseCode(503)
+                        if (healthy) json(JSONObject().put("status", "alive").put("version", "0.6.0")
+                            .put("compatibility", JSONObject().put("protocol", protocol).put("min_app_version_code", 10)
+                                .put("recommended_app_version_code", 11).put("max_app_version_code", 11)).toString()) else MockResponse().setResponseCode(503)
                     }
-                    request.path == "/auth/challenge" -> json(JSONObject().put("user_id", userId)
-                        .put("challenge", "c".repeat(43)).put("audience", url).toString())
+                    request.path == "/auth/challenge" -> {
+                        authenticationCount.incrementAndGet()
+                        json(JSONObject().put("user_id", userId).put("challenge", "c".repeat(43)).put("audience", url).toString())
+                    }
                     request.path == "/auth/verify" -> json(JSONObject().put("user_id", userId)
                         .put("token", "t".repeat(43)).put("expires_in", 3600).toString())
                     request.path == "/prekeys/status" -> json("{\"available\":0,\"message_ttl_seconds\":2592000}")
@@ -697,6 +703,7 @@ class ServerConnectionAndroidTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val model = model(scenario)
             awaitState("foreground connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.socket != null }
+            val authBefore = first.authenticationCount.get()
             val friend = "d".repeat(64)
             instrumentation.runOnMainSync {
                 model.viewSaved(first.pairing)
@@ -724,6 +731,7 @@ class ServerConnectionAndroidTest {
             }
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
             awaitState("resumed original connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.socketCount.get() == 1 }
+            assertEquals("App switch must reuse authentication", authBefore, first.authenticationCount.get())
             instrumentation.runOnMainSync {
                 assertEquals(first.pairing.url, model.activeServer?.url)
                 assertEquals(second.pairing.url, model.viewedServer?.url)
@@ -737,6 +745,19 @@ class ServerConnectionAndroidTest {
             onView(withText("${second.pairing.name} - chats")).check(matches(isDisplayed()))
             com.example.carriex.notifications.NotificationPolling.openIntent(instrumentation.targetContext).send()
             onView(allOf(withText("Notifications"), withParent(isAssignableFrom(com.google.android.material.appbar.MaterialToolbar::class.java)))).check(matches(isDisplayed()))
+        }
+    }
+
+    @Test fun incompatibleServerShowsVersionAndGuidanceBeforeAuthentication() = withSavedServers { first, _, store ->
+        first.protocol = 4
+        store.setAutoConnect(first.pairing.url)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val model = model(scenario)
+            awaitState("incompatible server health") { model.compatibilityByServer[first.pairing.fingerprint] != null && !model.connecting }
+            assertEquals(0, first.authenticationCount.get())
+            assertFalse(model.connected)
+            onView(withText("Server 0.6.0 · Incompatible")).check(matches(isDisplayed()))
+            onView(withText("Ask the server owner to update the server or confirm which app version it supports.")).check(matches(isDisplayed()))
         }
     }
 

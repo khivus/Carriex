@@ -55,6 +55,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var selectedGroup: String? = null
         private set
+    val compatibilityByServer = mutableMapOf<String, com.example.carriex.transport.ServerCompatibility>()
     private val groupsByServer = mutableMapOf<String, List<GroupConversation>>()
     private val optimisticGroups = mutableMapOf<String, MutableList<Message>>()
     private val savingGroupMessages = mutableMapOf<String, String>()
@@ -232,10 +233,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             handler.post {
                 if (attempt != generation) { candidate.close(); return@post }
                 pendingTransport = null
+                candidate.serverCompatibility?.let { compatibilityByServer[server.fingerprint] = it }
                 connecting = false
                 if (!healthy) {
                     connectionStatus = ServerTransport.ConnectionStatus.DISCONNECTED
-                    error = candidate.connectionError ?: "Cannot reach this Carriex server. Check the address, port and connection."
+                    error = if(candidate.serverCompatibility?.level == com.example.carriex.transport.ServerCompatibility.Level.INCOMPATIBLE) null
+                        else candidate.connectionError ?: "Cannot reach this Carriex server. Check the address, port and connection."
                     candidate.close()
                     changed(); return@post
                 }

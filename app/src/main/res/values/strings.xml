@@ -617,4 +617,6 @@
     <string name="ui_notification_check_status">"Check status"</string>
     <string name="ui_notification_check_detail">"Run a check now and review the last result for each enabled server."</string>
     <string name="ui_no_server_checks">"No servers selected for notifications."</string>
+    <string name="ui_compat_limited_detail">"The app will work with this server, but some features may have issues."</string>
+    <string name="ui_hide_message">"Hide message"</string>
 </resources>

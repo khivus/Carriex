@@ -104,6 +104,8 @@ class ServerConnectionAndroidTest {
         val pairing: PairedServer
         @Volatile var healthy = true
         @Volatile var protocol = 3
+        @Volatile var version = "0.6.0"
+        @Volatile var compatibilityInfo = true
         val authenticationCount = AtomicInteger()
         val friend = DeviceIdentity(KeyPairGenerator.getInstance("EC").apply {
             initialize(ECGenParameterSpec("secp256r1"))
@@ -208,9 +210,10 @@ class ServerConnectionAndroidTest {
                     request.path == "/health" -> {
                         healthEntered.countDown()
                         holdHealth?.await(15, TimeUnit.SECONDS)
-                        if (healthy) json(JSONObject().put("status", "alive").put("version", "0.6.0")
-                            .put("compatibility", JSONObject().put("protocol", protocol).put("min_app_version_code", 10)
-                                .put("recommended_app_version_code", 11).put("max_app_version_code", 11)).toString()) else MockResponse().setResponseCode(503)
+                        if (healthy) json(JSONObject().put("status", "alive").put("version", version).apply {
+                            if(compatibilityInfo) put("compatibility", JSONObject().put("protocol", protocol).put("min_app_version_code", 10)
+                                .put("recommended_app_version_code", 11).put("max_app_version_code", 11))
+                        }.toString()) else MockResponse().setResponseCode(503)
                     }
                     request.path == "/auth/challenge" -> {
                         authenticationCount.incrementAndGet()
@@ -818,13 +821,53 @@ class ServerConnectionAndroidTest {
     @Test fun incompatibleServerShowsVersionAndGuidanceBeforeAuthentication() = withSavedServers { first, _, store ->
         first.protocol = 4
         store.setAutoConnect(first.pairing.url)
+        val strings = com.example.carriex.localization.AppLanguage.context(instrumentation.targetContext)
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val model = model(scenario)
             awaitState("incompatible server health") { model.compatibilityByServer[first.pairing.fingerprint] != null && !model.connecting }
             assertEquals(0, first.authenticationCount.get())
             assertFalse(model.connected)
-            onView(withText("Server 0.6.0 · Incompatible")).check(matches(isDisplayed()))
-            onView(withText("Ask the server owner to update the server or confirm which app version it supports.")).check(matches(isDisplayed()))
+            onView(withText(strings.getString(R.string.ui_server_version, "0.6.0", strings.getString(R.string.ui_compat_incompatible)))).check(matches(isDisplayed()))
+            onView(withText(strings.getString(R.string.ui_compat_ask_host))).check(matches(isDisplayed()))
+            onView(withText(strings.getString(R.string.ui_hide_message))).check(doesNotExist())
+        }
+    }
+
+    @Test fun limitedCompatibilityExplainsIssuesAndCanBeHiddenPerServerAndVersion() = withSavedServers { first, second, store ->
+        first.compatibilityInfo = false
+        second.compatibilityInfo = false
+        store.setAutoConnect(first.pairing.url)
+        val strings = com.example.carriex.localization.AppLanguage.context(instrumentation.targetContext)
+        val warning = strings.getString(R.string.ui_compat_limited_detail)
+        val warningView = withText(org.hamcrest.Matchers.startsWith(warning))
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val model = model(scenario)
+                awaitState("limited server remains connected") { model.connectionStatus == ConnectionStatus.CONNECTED }
+                onView(warningView).check(matches(isDisplayed()))
+                onView(withText(strings.getString(R.string.ui_hide_message))).perform(click())
+                onView(warningView).check(doesNotExist())
+                assertTrue(model.connected)
+                scenario.recreate()
+                onView(warningView).check(doesNotExist())
+            }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val model = model(scenario)
+                awaitState("hidden notice survives new activity") { model.connectionStatus == ConnectionStatus.CONNECTED }
+                onView(warningView).check(doesNotExist())
+                scenario.onActivity { model.connect(second.pairing) }
+                awaitState("another limited server") { model.viewingConnectedServer && model.activeServer?.url == second.pairing.url && model.connectionStatus == ConnectionStatus.CONNECTED }
+                onView(warningView).check(matches(isDisplayed()))
+                first.version = "0.6.1"
+                scenario.onActivity { model.connect(first.pairing) }
+                awaitState("changed server version") {
+                    model.connectionStatus == ConnectionStatus.CONNECTED && model.compatibilityByServer[first.pairing.fingerprint]?.version == "0.6.1"
+                }
+                onView(warningView).check(matches(isDisplayed()))
+            }
+        } finally {
+            preferences.edit().remove("compatibility_notice_${first.pairing.fingerprint}")
+                .remove("compatibility_notice_${second.pairing.fingerprint}").commit()
         }
     }
 

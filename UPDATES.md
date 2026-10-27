@@ -27,7 +27,10 @@ does not silently install an APK. A failed or interrupted download can be retrie
 The server's `/health` response separately reports its version and a small
 compatibility manifest. App/server release numbers are independent. Protocol 3
 and the advertised app-code range determine full, limited or incompatible use.
-Absent metadata is shown as limited compatibility. Incompatible servers are
+Absent metadata is shown as limited compatibility. The notice explains that
+the app will work but some features may have issues. **Hide message** remembers
+the choice for that server and app/server version; a changed version shows it
+again. Compatibility status remains available in server details. Incompatible servers are
 stopped before device authentication. Guidance links to app releases and asks
 the server owner to update when appropriate. Server maintainers must review the
 advertised range whenever they change the protocol or support a new app release.

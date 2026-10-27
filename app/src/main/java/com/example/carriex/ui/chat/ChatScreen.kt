@@ -449,15 +449,24 @@ class ChatScreen : Fragment() {
     private fun compatibilityNotice(parent: LinearLayout, server: PairedServer) {
         val status = model.compatibilityByServer[server.fingerprint] ?: return
         if(status.level == com.example.carriex.transport.ServerCompatibility.Level.FULL) return
-        val detail = getString(when(status.action) {
+        val limited = status.level == com.example.carriex.transport.ServerCompatibility.Level.LIMITED
+        val hiddenKey = "compatibility_notice_${server.fingerprint}"
+        val noticeVersion = "${com.example.carriex.BuildConfig.VERSION_CODE}:${status.version}:${status.action}"
+        if(limited && setupPreferences.getString(hiddenKey, null) == noticeVersion) return
+        val guidance = getString(when(status.action) {
             com.example.carriex.transport.ServerCompatibility.Action.UPDATE_APP -> R.string.ui_compat_update_app
             com.example.carriex.transport.ServerCompatibility.Action.OLDER_APP_OR_HOST -> R.string.ui_compat_older_app
             else -> R.string.ui_compat_ask_host
         })
+        val detail = if(limited) "${getString(R.string.ui_compat_limited_detail)}\n\n$guidance" else guidance
         val notice = settingCard(parent, compatibilityStatus(server).orEmpty(), detail)
         if(status.level == com.example.carriex.transport.ServerCompatibility.Level.INCOMPATIBLE)
             notice.contentDescription = getString(R.string.ui_server_incompatible_prompt, detail)
         notice.addView(button(getString(R.string.ui_open_releases)) { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(updates.releasesUrl))) })
+        if(limited) notice.addView(button(getString(R.string.ui_hide_message)) {
+            setupPreferences.edit().putString(hiddenKey, noticeVersion).apply()
+            parent.removeView(notice)
+        })
     }
 
     private fun setup() {

@@ -617,4 +617,6 @@
     <string name="ui_notification_check_status">"Состояние проверок"</string>
     <string name="ui_notification_check_detail">"Выполните проверку сейчас и просмотрите последний результат для каждого включённого сервера."</string>
     <string name="ui_no_server_checks">"Ни один сервер не выбран для уведомлений."</string>
+    <string name="ui_compat_limited_detail">"Приложение будет работать с этим сервером, но некоторые функции могут работать с проблемами."</string>
+    <string name="ui_hide_message">"Скрыть сообщение"</string>
 </resources>

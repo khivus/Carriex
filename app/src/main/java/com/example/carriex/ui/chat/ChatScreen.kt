@@ -136,7 +136,7 @@ class ChatScreen : Fragment() {
     private var renderedPeer: String? = null
     private var renderedServers = false
     private var renderedScope: String? = null
-    private var messageScroll: ScrollView? = null
+    private var messageScroll: ConversationScrollView? = null
     private var messageList: LinearLayout? = null
     private var connectionLabel: TextView? = null
     private var errorLabel: TextView? = null
@@ -1440,7 +1440,7 @@ class ChatScreen : Fragment() {
             setOnClickListener { model.dismissError() }
         }.also(root::addView)
         val list = spacedList()
-        val scroll = ScrollView(requireContext()).apply {
+        val scroll = ConversationScrollView(requireContext()).apply {
             clipToPadding = false; addView(list)
             // Focus stays in the composer when messages change.
             descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
@@ -1603,7 +1603,6 @@ class ChatScreen : Fragment() {
         val peer = model.selectedConversation ?: return
         val list = messageList ?: return
         val scroll = messageScroll ?: return
-        val wasAtBottom = scroll.scrollY >= list.height - scroll.height - dp(24)
         conversationTitle?.let { if (it.text.toString() != model.contactLabel(peer)) it.text = model.contactLabel(peer) }
         connectionLabel?.let { if (it.text.toString() != conversationStatus()) it.text = conversationStatus() }
         errorLabel?.apply {
@@ -1635,12 +1634,8 @@ class ChatScreen : Fragment() {
         val ids = messages.mapTo(hashSetOf()) { it.id }
         messageViews.keys.filter { it !in ids }.forEach { id -> list.removeView(messageViews.remove(id)!!.row) }
         if (messageViews.isEmpty()) list.removeAllViews()
-        var added = false
-        var sent = false
         messages.forEachIndexed { index, message ->
             val views = messageViews.getOrPut(message.id) {
-                added = true
-                if (message.from == model.userId) sent = true
                 messageRow(message).also { list.addView(it.row) }
             }
             if(list.indexOfChild(views.row) != index) { list.removeView(views.row); list.addView(views.row, index) }
@@ -1685,9 +1680,7 @@ class ChatScreen : Fragment() {
             views.time.visibility = if (message.sentAt == null) View.GONE else View.VISIBLE
         }
         if (messages.isEmpty()) list.addView(label(if(group != null) getString(R.string.empty_group, group.state.name) else getString(R.string.ui_say_hello_to, model.contactLabel(peer)), 16f, true))
-        if (initial || (added && (wasAtBottom || sent))) scroll.post {
-            if (messageScroll === scroll) scroll.scrollTo(0, maxOf(0, list.height - scroll.height))
-        }
+        if(initial) scroll.showLatest()
     }
 
     override fun onDestroyView() {

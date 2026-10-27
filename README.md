@@ -57,7 +57,7 @@ it returns after a real service restart. Visible status text follows interval an
 language changes without restoring a dismissed notification. Intervals of at
 least 15 minutes use periodic jobs without this service notification.
 
-Send using **Send**, the keyboard's Send action, or **Enter** on a hardware keyboard. **Shift+Enter** inserts a new line. Message status updates preserve the conversation's scroll position and the composer's focus and selection. New messages scroll to the bottom when you are already there; sending your own message also scrolls to it.
+Send using **Send**, the keyboard's Send action, or **Enter** on a hardware keyboard. **Shift+Enter** inserts a new line. Message status updates preserve the conversation's scroll position and the composer's focus and selection. When you are at the bottom, the latest messages stay visible as the keyboard opens/closes, the composer grows, or new messages arrive. When you scroll up to read earlier messages, those changes preserve your reading position. This applies to direct and group chats.
 
 Chat lists and conversation headers show the first eight characters of a contact's ID. When you first open a chat, choose an optional local name: a named contact appears as **Name (1234abcd)**, and an unnamed contact as **1234abcd**. Names are saved separately for each server. Use the chat's **three-dot menu > Rename chat** to change or clear a name, and **Contact ID** to view or copy the complete ID. Verification always compares the full ID.
 

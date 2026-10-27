@@ -11,6 +11,9 @@ import android.view.ViewGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.lifecycle.ViewModelProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.navigation.fragment.NavHostFragment
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
@@ -28,6 +31,7 @@ import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.carriex.R
 import com.example.carriex.app.MainActivity
 import com.example.carriex.auth.AndroidDeviceIdentity
 import com.example.carriex.auth.DeviceIdentity
@@ -108,6 +112,7 @@ class ServerConnectionAndroidTest {
         },allowWithoutOneTimeKey={true})
         private val peerBundle = peerProtocol.publication(0, 2_592_000)
         @Volatile private var clientBundle: JSONObject? = null
+        val prekeysPublished get() = clientBundle != null
 
         private fun claim(bundle: JSONObject) = JSONObject(bundle.toString()).apply {
             val keys = getJSONArray("one_time_prekeys")
@@ -1280,6 +1285,144 @@ class ServerConnectionAndroidTest {
         } finally { preferences.edit().putInt("appearance_mode", oldMode).putInt("appearance_accent", oldAccent).commit() }
     }
 
+    @Test fun keyboardResizeFollowsBottomAndIncomingMessagesPreserveScrolledUpHistory() = withSavedServers { first, _, store ->
+        val context = instrumentation.targetContext
+        val userId = AndroidDeviceIdentity.load().userId
+        val friend = first.friend.userId
+        val history = (0 until 60).map { index ->
+            Message(userId, friend, "History message $index\nSecond line of the saved message".toByteArray(),
+                Message.MessageType.DATA, sentAt = System.currentTimeMillis() - (60 - index) * 60_000L)
+        }
+        ChatStore(context).use { saved ->
+            history.forEach { saved.addOutgoing(first.pairing.fingerprint, it); saved.mark(first.pairing.fingerprint, it.id, Message.DeliveryStatus.SENT) }
+        }
+        fun shell(command: String): String = instrumentation.uiAutomation.executeShellCommand(command).use {
+            java.io.FileInputStream(it.fileDescriptor).bufferedReader().use { input -> input.readText().trim() }
+        }
+        val originalHardwareKeyboard = shell("settings get secure show_ime_with_hard_keyboard")
+        val originalHandwriting = shell("settings get secure stylus_handwriting_enabled")
+        // Require a full software keyboard, rather than a floating handwriting toolbar.
+        shell("settings put secure show_ime_with_hard_keyboard 1")
+        shell("settings put secure stylus_handwriting_enabled 0")
+        store.setAutoConnect(first.pairing.url)
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val model = model(scenario)
+                awaitState("connected chat with published encryption keys") {
+                    model.connectionStatus == ConnectionStatus.CONNECTED && first.socket != null && first.prekeysPublished
+                }
+                scenario.onActivity { model.openChat(friend) }
+                lateinit var input: TextInputEditText
+                lateinit var scroll: ScrollView
+                lateinit var list: ViewGroup
+                lateinit var decor: View
+                scenario.onActivity { activity ->
+                    decor = activity.window.decorView
+                    val views = descendants(decor)
+                    input = views.filterIsInstance<TextInputEditText>().single()
+                    scroll = views.filterIsInstance<ScrollView>().single()
+                    list = scroll.getChildAt(0) as ViewGroup
+                }
+                fun range() = maxOf(0, list.height - scroll.height + scroll.paddingTop + scroll.paddingBottom)
+                fun settled() = !scroll.isLayoutRequested && !list.isLayoutRequested
+                fun atBottom() = kotlin.math.abs(range() - scroll.scrollY) <= 2
+                fun keyboardVisible() = ViewCompat.getRootWindowInsets(decor)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                fun keyboard(show: Boolean) {
+                    scenario.onActivity { activity ->
+                        if(show) input.requestFocus()
+                        val controller = WindowCompat.getInsetsController(activity.window, decor)
+                        if(show) controller.show(WindowInsetsCompat.Type.ime()) else controller.hide(WindowInsetsCompat.Type.ime())
+                    }
+                    awaitState("keyboard ${if(show) "shown" else "hidden"} and chat laid out") { keyboardVisible() == show && settled() }
+                    // Let the final IME animation/layout frame finish before checking offsets.
+                    instrumentation.waitForIdleSync()
+                    Thread.sleep(500)
+                }
+                fun incoming(text: String): Message {
+                    val wire = first.encryptFromFriend(text, System.currentTimeMillis())
+                    val frame = JSONObject().put("type", "message").put("message", JSONObject()
+                        .put("from", friend).put("id", wire.id).put("ciphertext",
+                            (byteArrayOf(Message.MessageType.DATA.ordinal.toByte()) + wire.content)
+                                .joinToString("") { "%02x".format(it) }))
+                    assertTrue(first.socket!!.send(frame.toString()))
+                    return wire.copy(content = text.toByteArray())
+                }
+                fun awaitRows(messages: List<Message>) {
+                    awaitState("incoming encrypted messages rendered") {
+                        messages.all { item -> model.conversations[friend]?.any { it.id == item.id } == true } &&
+                            list.childCount == model.conversations[friend]?.size && settled()
+                    }
+                    instrumentation.waitForIdleSync()
+                }
+                fun assertLatestVisible(text: String) {
+                    scenario.onActivity {
+                        assertTrue("The message list remains at its bottom", atBottom())
+                        val body = descendants(list).filterIsInstance<TextView>().single { it.text.toString() == text }
+                        val viewBounds = android.graphics.Rect()
+                        assertTrue("Latest message is visible above the composer", body.getGlobalVisibleRect(viewBounds))
+                        assertEquals("Latest message is fully visible", body.height, viewBounds.height())
+                        assertTrue(input.hasFocus())
+                    }
+                }
+                // The IME can survive a previous activity; start with a known viewport.
+                keyboard(false)
+                awaitState("long history opens at the bottom") { range() > scroll.height && atBottom() && settled() }
+                var fullHeight = 0
+                scenario.onActivity { fullHeight = scroll.height }
+                keyboard(true)
+                awaitState("the real IME shrinks the message viewport from $fullHeight") { scroll.height < fullHeight && settled() }
+                assertLatestVisible(String(history.last().content))
+                val bottomArrivals = (1..3).map { incoming("Incoming at bottom $it\nA second incoming line") }
+                awaitRows(bottomArrivals)
+                assertLatestVisible(String(bottomArrivals.last().content))
+                var beforeWrap = 0
+                scenario.onActivity {
+                    beforeWrap = scroll.height
+                    input.setText("Draft line 1\nDraft line 2\nDraft line 3\nDraft line 4")
+                    input.setSelection(3, 8)
+                }
+                awaitState("multiline composer also resizes the viewport") { scroll.height < beforeWrap && settled() }
+                assertLatestVisible(String(bottomArrivals.last().content))
+                keyboard(false)
+                scenario.onActivity { assertTrue("Closing the keyboard keeps the latest messages", atBottom()) }
+                lateinit var anchor: View
+                var offset = 0
+                var anchorOffset = 0
+                scenario.onActivity {
+                    scroll.scrollTo(0, range() / 2)
+                    offset = scroll.scrollY
+                    anchor = (0 until list.childCount).map(list::getChildAt).first { it.bottom > offset }
+                    anchorOffset = anchor.top - offset
+                }
+                keyboard(true)
+                scenario.onActivity {
+                    assertEquals("Opening the keyboard must retain the reading offset", offset, scroll.scrollY)
+                    assertEquals(anchorOffset, anchor.top - scroll.scrollY)
+                }
+                val olderViewArrivals = (1..3).map { incoming("Incoming while reading history $it") }
+                awaitRows(olderViewArrivals)
+                scenario.onActivity {
+                    assertEquals("New messages must not pull the reader down", offset, scroll.scrollY)
+                    assertEquals("The same old message keeps the same viewport position", anchorOffset, anchor.top - scroll.scrollY)
+                    assertEquals("Draft line 1\nDraft line 2\nDraft line 3\nDraft line 4", input.text.toString())
+                    assertEquals(3, input.selectionStart)
+                    assertEquals(8, input.selectionEnd)
+                }
+                keyboard(false)
+                scenario.onActivity { assertEquals("Closing the keyboard while reading history must not move it", offset, scroll.scrollY) }
+                scenario.onActivity { scroll.scrollTo(0, range()) }
+                keyboard(true)
+                assertLatestVisible(String(olderViewArrivals.last().content))
+                keyboard(false)
+            }
+        } finally {
+            if(originalHardwareKeyboard == "null") shell("settings delete secure show_ime_with_hard_keyboard")
+            else shell("settings put secure show_ime_with_hard_keyboard $originalHardwareKeyboard")
+            if(originalHandwriting == "null") shell("settings delete secure stylus_handwriting_enabled")
+            else shell("settings put secure stylus_handwriting_enabled $originalHandwriting")
+        }
+    }
+
     @Test fun receiptsKeepScrollComposerAndSelectionAndEnterSendsOnce() = withSavedServers { first, _, store ->
         val userId = AndroidDeviceIdentity.load().userId
         val friend = first.friend.userId
@@ -1327,7 +1470,7 @@ class ServerConnectionAndroidTest {
                 assertEquals(2, input.selectionStart)
                 assertEquals(9, input.selectionEnd)
                 assertEquals("Receipt must not jump to bottom", 0, scroll.scrollY)
-                val status = views.filterIsInstance<TextView>().single { it.text.toString() == "Received" }
+                val status = views.filterIsInstance<TextView>().single { it.text.toString() == activity.getString(R.string.ui_received) }
                 assertEquals(Gravity.END, status.gravity and Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK)
                 assertEquals("Short bubble fits its status", 1, status.lineCount)
                 assertTrue(status.layout.getLineWidth(0) <= status.width - status.paddingLeft - status.paddingRight)

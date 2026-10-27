@@ -658,7 +658,7 @@
     <string name="lock_storage_error">App protection could not be read or saved. Try again or use your other unlock method.</string>
     <string name="lock_new_password">New password</string>
     <string name="lock_repeat_password">Repeat password</string>
-    <string name="lock_password_minimum">Use 6–128 characters. Remember this password: it cannot be recovered.</string>
+    <string name="lock_password_minimum">Use 4–128 characters. Remember this password: it cannot be recovered.</string>
     <string name="lock_password_mismatch">Passwords do not match.</string>
     <string name="lock_saving">Saving password…</string>
     <string name="lock_phone_screen_lock">Use phone screen lock</string>

@@ -658,7 +658,7 @@
     <string name="lock_storage_error">Не удалось прочитать или сохранить настройки защиты. Попробуйте ещё раз или используйте другой способ входа.</string>
     <string name="lock_new_password">Новый пароль</string>
     <string name="lock_repeat_password">Повторите пароль</string>
-    <string name="lock_password_minimum">Используйте от 6 до 128 символов. Запомните пароль: восстановить его невозможно.</string>
+    <string name="lock_password_minimum">Используйте от 4 до 128 символов. Запомните пароль: восстановить его невозможно.</string>
     <string name="lock_password_mismatch">Пароли не совпадают.</string>
     <string name="lock_saving">Сохранение пароля…</string>
     <string name="lock_phone_screen_lock">Блокировка экрана телефона</string>

@@ -9,6 +9,8 @@ import android.widget.LinearLayout
 import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.carriex.R
 import com.google.android.material.button.MaterialButton
@@ -117,6 +119,12 @@ class AppLockSettings(
         var saving = false
         dialog.setOnShowListener {
             dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            first.requestFocus()
+            first.post {
+                if (dialog.isShowing) dialog.window?.let { window ->
+                    WindowCompat.getInsetsController(window, first).show(WindowInsetsCompat.Type.ime())
+                }
+            }
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (saving) return@setOnClickListener
                 val value = first.text?.toString()?.toCharArray() ?: charArrayOf()

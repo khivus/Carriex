@@ -95,6 +95,7 @@ class AppLockController(
                 biometricSuccess = null
                 credentialPromptActive = false
                 status?.text = errString
+                focusPassword()
             }
             override fun onAuthenticationFailed() { status?.setText(R.string.lock_fingerprint_failed) }
         })
@@ -121,6 +122,17 @@ class AppLockController(
             automaticBiometric = false
             // Posting waits until the activity and prompt host have fully resumed.
             container.post { if (gate != null && activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) unlockBiometric() }
+        } else focusPassword()
+    }
+
+    private fun focusPassword() {
+        val input = password ?: return
+        input.post {
+            if (password === input && gate != null && biometricSuccess == null && !credentialPromptActive &&
+                activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                input.requestFocus()
+                WindowCompat.getInsetsController(activity.window, input).show(WindowInsetsCompat.Type.ime())
+            }
         }
     }
 
@@ -293,8 +305,11 @@ class AppLockController(
         content.visibility = View.INVISIBLE
         content.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         content.findFocus()?.clearFocus()
-        gate?.apply { isFocusableInTouchMode = true; requestFocus() }
-        container.post { WindowCompat.getInsetsController(activity.window, container).hide(WindowInsetsCompat.Type.ime()) }
+        if (password != null) password?.requestFocus()
+        else gate?.apply { isFocusableInTouchMode = true; requestFocus() }
+        if (store.biometric || password == null) container.post {
+            WindowCompat.getInsetsController(activity.window, container).hide(WindowInsetsCompat.Type.ime())
+        }
         back.isEnabled = true
         automaticBiometric = store.biometric
         refreshProtection()
@@ -328,6 +343,7 @@ class AppLockController(
     }
 
     private fun authenticated() {
+        WindowCompat.getInsetsController(activity.window, container).hide(WindowInsetsCompat.Type.ime())
         session.unlock()
         val action = pendingAction
         pendingAction = null
@@ -340,6 +356,7 @@ class AppLockController(
     }
 
     private fun cancelConfirmation() {
+        WindowCompat.getInsetsController(activity.window, container).hide(WindowInsetsCompat.Type.ime())
         attempt++
         pendingAction = null
         confirming = false

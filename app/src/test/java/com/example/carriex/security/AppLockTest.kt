@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AppLockTest {
+    @Test fun fourCharactersAreAcceptedAndShorterPasswordsAreRejected() {
+        val password = "1234".toCharArray()
+        assertTrue(PasswordVerifier.matches(password, PasswordVerifier.create(password)))
+        assertTrue(runCatching { PasswordVerifier.create("123".toCharArray()) }.isFailure)
+    }
+
     @Test fun passwordIsSaltedAndWrongOrCorruptValuesNeverMatch() {
         val password = "correct horse battery".toCharArray()
         val record = PasswordVerifier.create(password)

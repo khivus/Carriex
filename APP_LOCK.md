@@ -7,7 +7,7 @@ fingerprint unlock. Use either method on its own, or enable both so either one c
 unlock Carriex. Enabling fingerprint requires successful Android biometric
 authentication first. Fingerprint templates stay with Android.
 
-The app password uses 6–128 characters and must be entered twice when created or
+The app password uses 4–128 characters and must be entered twice when created or
 changed. Changing or removing protection, or changing the lock timing, requires
 authentication. Repeated incorrect passwords temporarily delay further attempts;
 closing the app does not reset the delay.

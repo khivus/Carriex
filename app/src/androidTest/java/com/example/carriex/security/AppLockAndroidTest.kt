@@ -10,6 +10,8 @@ import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -36,7 +38,7 @@ class AppLockAndroidTest {
     private val chatPrefs get() = context.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
     private lateinit var savedLock: Map<String, *>
     private lateinit var savedChat: Map<String, *>
-    private val password = "test password 123"
+    private val password = "1234"
 
     @Before fun prepare() {
         savedLock = prefs.all; savedChat = chatPrefs.all
@@ -95,6 +97,7 @@ class AppLockAndroidTest {
     @Test fun passwordCanBeCreatedConfirmedAndRemovedThroughSettings() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { openSettings(it); click(it, R.string.lock_add_password) }
+            onView(withHint(R.string.lock_new_password)).inRoot(isDialog()).check(matches(hasFocus()))
             onView(withHint(R.string.lock_new_password)).inRoot(isDialog()).perform(replaceText(password))
             onView(withHint(R.string.lock_repeat_password)).inRoot(isDialog()).perform(replaceText("different password"), closeSoftKeyboard())
             onView(withText(R.string.ui_save)).inRoot(isDialog()).perform(click())
@@ -112,6 +115,34 @@ class AppLockAndroidTest {
             assertFalse(AppLockStore(context).enabled)
             scenario.onActivity { activity ->
                 assertEquals(0, activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+    }
+
+    @Test fun passwordEntryIsFocusedAndKeyboardOpensOnLaunchAndEveryReturn() {
+        AppLockStore(context).setPassword(password.toCharArray())
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            fun keyboardReady(activity: MainActivity) = visible(activity).filterIsInstance<EditText>().singleOrNull()?.hasFocus() == true &&
+                ViewCompat.getRootWindowInsets(activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            waitFor(scenario, ::keyboardReady)
+            unlock(scenario)
+            scenario.moveToState(Lifecycle.State.CREATED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            waitFor(scenario, ::keyboardReady)
+            unlock(scenario)
+            var unavailableBiometric = false
+            scenario.onActivity { activity ->
+                unavailableBiometric = !activity.appLock.canEnableBiometric()
+                if (unavailableBiometric) {
+                    // Existing fingerprint protection must fall back to a focused password
+                    // when Android no longer has an enrolled fingerprint.
+                    activity.appLock.store.biometric = true
+                    activity.appLock.lockNow()
+                }
+            }
+            if (unavailableBiometric) {
+                waitFor(scenario, ::keyboardReady)
+                unlock(scenario)
             }
         }
     }

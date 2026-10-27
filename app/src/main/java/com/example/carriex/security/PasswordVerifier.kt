@@ -7,7 +7,7 @@ import javax.crypto.spec.PBEKeySpec
 
 /** A salted, versioned verifier; the Android store additionally wraps this in Keystore AES-GCM. */
 object PasswordVerifier {
-    const val MIN_LENGTH = 6
+    const val MIN_LENGTH = 4
     const val MAX_LENGTH = 128
     enum class Algorithm(val jcaName: String, val iterations: Int) {
         SHA256("PBKDF2WithHmacSHA256", 600_000),

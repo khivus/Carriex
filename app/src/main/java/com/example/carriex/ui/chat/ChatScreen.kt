@@ -115,6 +115,12 @@ class ChatScreen : Fragment() {
     private lateinit var drawerStatus: TextView
     private lateinit var pageActions: PageActions
     private var toolbarMenuMode = -1
+    private var setupBuiltStep = -1
+    private var batteryStatus: TextView? = null
+    private var permissionStatus: TextView? = null
+    private var privacyServer: String? = null
+    private val setupPreferences get() = NotificationPolling.preferences(requireContext())
+    private val needsSetup get() = !setupPreferences.getBoolean("setup_completed", false)
     private var settingsVisible = false
     private var settingsBuilt = false
     private var settingsSection: String? = null
@@ -123,10 +129,8 @@ class ChatScreen : Fragment() {
     private var pageScroll: ScrollView? = null
     private val settingsWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        NotificationPolling.preferences(requireContext()).edit().putBoolean("notifications_enabled", granted).apply()
         scheduleNotifications()
-        settingsBuilt = false; render()
-        if (granted) offerBatteryExemption()
+        settingsBuilt = false; setupBuiltStep = -1; render()
     }
     private val requestAlertPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if(granted) model.notifyPendingMessageRequests()
@@ -206,6 +210,7 @@ class ChatScreen : Fragment() {
         inviteScanServer = savedInstanceState?.getString("invite_scan_server")
         settingsVisible = savedInstanceState?.getBoolean("notifications_page") ?: false
         settingsSection = savedInstanceState?.getString("settings_section")
+        privacyServer = savedInstanceState?.getString("privacy_server")
         requestsVisible = savedInstanceState?.getBoolean("requests_page") ?: false
     }
 
@@ -216,10 +221,12 @@ class ChatScreen : Fragment() {
         outState.putString("invite_scan_server", inviteScanServer)
         outState.putBoolean("notifications_page", settingsVisible)
         outState.putString("settings_section", settingsSection)
+        outState.putString("privacy_server", privacyServer)
         outState.putBoolean("requests_page", requestsVisible)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        setupBuiltStep = -1
         toolbarMenuMode = -1
         root = column().apply {
             setPadding(dp(10), dp(8), dp(10), dp(8))
@@ -271,6 +278,7 @@ class ChatScreen : Fragment() {
             override fun handleOnBackStarted(backEvent: BackEventCompat) { fromLeftEdge = backEvent.swipeEdge == BackEventCompat.EDGE_LEFT }
             override fun handleOnBackCancelled() { fromLeftEdge = false }
             override fun handleOnBackPressed() {
+                if(needsSetup) { goBack(); return }
                 val gesture = fromLeftEdge
                 fromLeftEdge = false
                 if (drawer.isDrawerOpen(GravityCompat.START)) drawer.closeDrawer(GravityCompat.START)
@@ -284,6 +292,7 @@ class ChatScreen : Fragment() {
     }
 
     private fun goBack(): Boolean = when {
+        needsSetup -> { if(setupPreferences.getInt("setup_step", 0) > 0) advanceSetup(-1); true }
         settingsVisible && settingsSection != null -> { settingsSection = null; settingsBuilt = false; render(); true }
         settingsVisible -> { settingsVisible = false; render(); true }
         requestsVisible -> { requestsVisible = false; render(); true }
@@ -293,6 +302,17 @@ class ChatScreen : Fragment() {
     }
 
     private fun render() {
+        if(needsSetup) {
+            toolbar.visibility = View.GONE
+            pageActions.showMode(PageActions.NONE)
+            drawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
+            val step = setupPreferences.getInt("setup_step", 0).coerceIn(0, 2)
+            if(setupBuiltStep != step) { setupBuiltStep = step; root.removeAllViews(); setupPage(step) }
+            refreshNotificationStatus()
+            return
+        }
+        toolbar.visibility = View.VISIBLE
+        drawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED)
         root.post { if(view != null) reportVisibleMessages() }
         refreshInviteConfirmation?.invoke()
         updateNavigation()
@@ -655,18 +675,131 @@ class ChatScreen : Fragment() {
     }
 
     private fun settingsContent(): LinearLayout = spacedList().also { content ->
-        settingsStatus = null
+        settingsStatus = null; batteryStatus = null; permissionStatus = null
         root.addView(ScrollView(requireContext()).apply { addView(content) }, LinearLayout.LayoutParams(-1, -1))
+    }
+
+    private fun settingCard(parent: LinearLayout, title: String, detail: String = ""): LinearLayout = column().apply {
+        setPadding(dp(16), dp(12), dp(16), dp(12))
+        background = rounded(color(com.google.android.material.R.attr.colorSurfaceContainer), 16)
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
+        addView(label(title, 18f).apply { setTypeface(typeface, Typeface.BOLD) })
+        if(detail.isNotBlank()) addView(label(detail, 14f, true))
+        parent.addView(this)
+    }
+
+    private fun selector(parent: LinearLayout, title: String, options: Array<String>, selected: Int, detail: String = "",
+                         changed: (Int) -> Unit) {
+        val card = settingCard(parent, title, detail)
+        val group = RadioGroup(requireContext()).apply { orientation = RadioGroup.VERTICAL; contentDescription = title }
+        options.forEachIndexed { index, option ->
+            group.addView(com.google.android.material.radiobutton.MaterialRadioButton(requireContext()).apply {
+                id = View.generateViewId(); text = option; tag = index
+                layoutParams = RadioGroup.LayoutParams(-1, dp(48))
+            })
+        }
+        if(selected in options.indices) group.check(group.getChildAt(selected).id)
+        group.setOnCheckedChangeListener { _, id ->
+            val index = group.findViewById<View>(id)?.tag as? Int
+            if(index != null && index != selected) changed(index)
+        }
+        card.addView(group)
+    }
+
+    private fun languageSelector(content: LinearLayout) {
+        selector(content, getString(R.string.language), arrayOf(getString(R.string.language_system), getString(R.string.language_en),
+            getString(R.string.language_ru)), AppLanguage.tags.indexOf(AppLanguage.selected(requireContext())).coerceAtLeast(0),
+            getString(R.string.language_detail)) { index ->
+            AppLanguage.set(requireContext(), AppLanguage.tags[index])
+            NotificationPolling.channels(requireContext())
+        }
+    }
+
+    private fun appearanceSelectors(content: LinearLayout) {
+        selector(content, getString(R.string.ui_theme), Appearance.modes(requireContext()), Appearance.mode(requireContext())) { index ->
+            setupPreferences.edit().putInt("appearance_mode", index).commit(); requireActivity().recreate()
+        }
+        selector(content, getString(R.string.ui_accent_color), Appearance.accents(requireContext()), Appearance.accent(requireContext())) { index ->
+            setupPreferences.edit().putInt("appearance_accent", index).commit(); requireActivity().recreate()
+        }
+    }
+
+    private fun advanceSetup(delta: Int = 1) {
+        setupPreferences.edit().putInt("setup_step", (setupPreferences.getInt("setup_step", 0) + delta).coerceIn(0, 2)).commit()
+        setupBuiltStep = -1; render()
+    }
+
+    private fun setupPage(step: Int) {
+        batteryStatus = null; permissionStatus = null; settingsStatus = null
+        val content = spacedList()
+        root.addView(ScrollView(requireContext()).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        when(step) {
+            0 -> languageSelector(content)
+            1 -> {
+                content.addView(label(getString(R.string.ui_setup_appearance), 24f))
+                appearanceSelectors(content)
+            }
+            else -> {
+                content.addView(label(getString(R.string.ui_setup_notifications), 24f))
+                content.addView(label(getString(R.string.ui_setup_notifications_detail), 14f, true))
+                backgroundSettings(content)
+                androidNotificationSettings(content)
+            }
+        }
+        root.addView(actionRow().apply {
+            if(step < 2) {
+                addAction(getString(R.string.ui_skip)) { advanceSetup() }
+                addAction(getString(R.string.ui_continue)) { advanceSetup() }
+            } else addAction(getString(R.string.ui_finish_setup)) {
+                setupPreferences.edit().putBoolean("setup_completed", true).remove("setup_step").commit()
+                settingsBuilt = false; setupBuiltStep = -1; render()
+                scheduleNotifications()
+                model.savedServers.firstOrNull { it.url == model.autoConnectUrl }?.let { model.connect(it) }
+            }
+        })
+    }
+
+    private fun privacySettings() {
+        val content = settingsContent()
+        toggle(content, getString(R.string.ui_send_message_read_status), getString(R.string.ui_let_contacts_know_when_you_view_their_messages_in_a_direct_chat_off_by),
+            "send_read_status") { model.applyChatPreferences() }
+        val servers = model.savedServers
+        if(servers.isEmpty()) { content.addView(label(getString(R.string.ui_no_servers_security), 14f, true)); return }
+        val server = servers.firstOrNull { it.fingerprint == privacyServer }
+            ?: model.viewedServer ?: servers.first()
+        privacyServer = server.fingerprint
+        selector(content, getString(R.string.ui_server_security_selector), servers.map { it.name }.toTypedArray(),
+            servers.indexOfFirst { it.fingerprint == server.fingerprint }, getString(R.string.ui_server_security_detail)) {
+            privacyServer = servers[it].fingerprint; settingsBuilt = false; render()
+        }
+        val protection = settingCard(content, getString(R.string.ui_security),
+            getString(R.string.ui_leave_fallback_disabled_for_stronger_initial_protection_double_ratchet))
+        protection.addView(com.google.android.material.switchmaterial.SwitchMaterial(requireContext()).apply {
+            text = getString(R.string.ui_allow_sessions_without_a_one_time_key)
+            isChecked = model.allowFallback(server.fingerprint)
+            setOnCheckedChangeListener { _, checked -> model.setAllowFallback(checked, server.fingerprint) }
+        })
+        val blocked = settingCard(content, getString(R.string.ui_blocked_devices))
+        val peers = model.blockedContacts(server.fingerprint)
+        if(peers.isEmpty()) blocked.addView(label(getString(R.string.ui_no_blocked_contacts), 14f, true))
+        peers.forEach { peer ->
+            blocked.addView(actionRow().apply {
+                addView(label(model.contactLabel(peer, server.fingerprint)), LinearLayout.LayoutParams(0, -2, 1f))
+                addView(button(getString(R.string.ui_unblock)) {
+                    model.unblockContact(peer, server.fingerprint); settingsBuilt = false; render()
+                }, LinearLayout.LayoutParams(-2, -2))
+            })
+        }
     }
 
     private fun toggle(parent: LinearLayout, title: String, detail: String, key: String, default: Boolean = false,
                        changed: (Boolean) -> Unit = {}) {
         val prefs = NotificationPolling.preferences(requireContext())
-        parent.addView(MaterialCheckBox(requireContext()).apply {
-            text = title; isChecked = prefs.getBoolean(key, default)
+        val card = settingCard(parent, title, detail)
+        card.addView(com.google.android.material.switchmaterial.SwitchMaterial(requireContext()).apply {
+            contentDescription = title; isChecked = prefs.getBoolean(key, default)
             setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean(key, checked).apply(); changed(checked) }
         })
-        parent.addView(label(detail, 14f, true))
     }
 
     private fun sectionTitle(id: String): String = when(id) {
@@ -687,33 +820,12 @@ class ChatScreen : Fragment() {
                     "auto_accept_groups") { model.applyChatPreferences() }
                 content.addView(label(getString(R.string.ui_both_options_apply_to_all_saved_servers_turn_them_off_to_review_new_re), 14f, true))
             }
-            "Privacy" -> {
-                val content = settingsContent()
-                toggle(content, getString(R.string.ui_send_message_read_status), getString(R.string.ui_let_contacts_know_when_you_view_their_messages_in_a_direct_chat_off_by),
-                    "send_read_status") { model.applyChatPreferences() }
-                content.addView(label(getString(R.string.ui_security), 22f).apply { setTypeface(typeface, Typeface.BOLD) })
-                content.addView(label(getString(R.string.ui_security_options_and_blocked_devices_apply_to, model.viewedServer?.name ?: getString(R.string.ui_the_selected_server)), 14f, true))
-                content.addView(button(getString(R.string.ui_chat_security)) { chatSecurity() }.apply { isEnabled = model.viewedServer != null })
-            }
+            "Privacy" -> privacySettings()
             "Notifications" -> notificationsSettings()
             "Appearance" -> {
                 val content = settingsContent()
-                content.addView(label(getString(R.string.ui_theme), 22f).apply { setTypeface(typeface, Typeface.BOLD) })
-                content.addView(button(Appearance.modes(requireContext())[Appearance.mode(requireContext())]) {
-                    MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_theme))
-                        .setSingleChoiceItems(Appearance.modes(requireContext()), Appearance.mode(requireContext())) { dialog, index ->
-                            NotificationPolling.preferences(requireContext()).edit().putInt("appearance_mode", index).apply()
-                            dialog.dismiss(); requireActivity().recreate()
-                        }.setNegativeButton(getString(R.string.ui_cancel), null).show()
-                })
-                content.addView(label(getString(R.string.ui_accent_color), 22f).apply { setTypeface(typeface, Typeface.BOLD) })
-                content.addView(button(Appearance.accents(requireContext())[Appearance.accent(requireContext())]) {
-                    MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_accent_color))
-                        .setSingleChoiceItems(Appearance.accents(requireContext()), Appearance.accent(requireContext())) { dialog, index ->
-                            NotificationPolling.preferences(requireContext()).edit().putInt("appearance_accent", index).apply()
-                            dialog.dismiss(); requireActivity().recreate()
-                        }.setNegativeButton(getString(R.string.ui_cancel), null).show()
-                })
+                languageSelector(content)
+                appearanceSelectors(content)
                 content.addView(label(getString(R.string.ui_message_bubbles), 22f).apply { setTypeface(typeface, Typeface.BOLD) })
                 content.addView(button(getString(R.string.ui_your_messages, Appearance.bubbleLabel(requireContext(), true))) { chooseBubbleColor(true) }.apply {
                     contentDescription = getString(R.string.ui_your_message_bubble_color)
@@ -721,31 +833,25 @@ class ChatScreen : Fragment() {
                 content.addView(button(getString(R.string.ui_incoming_messages, Appearance.bubbleLabel(requireContext(), false))) { chooseBubbleColor(false) }.apply {
                     contentDescription = getString(R.string.ui_incoming_message_bubble_color)
                 })
-                content.addView(bubblePreview(getString(R.string.ui_your_message), Appearance.bubble(requireContext(), true,
+                val preview = settingCard(content, getString(R.string.ui_preview), getString(R.string.ui_preview_detail))
+                preview.isClickable = false
+                preview.addView(bubblePreview(getString(R.string.ui_your_message), Appearance.bubble(requireContext(), true,
                     color(androidx.appcompat.R.attr.colorPrimary)), true))
-                content.addView(bubblePreview(getString(R.string.ui_incoming_message), Appearance.bubble(requireContext(), false,
+                preview.addView(bubblePreview(getString(R.string.ui_incoming_message), Appearance.bubble(requireContext(), false,
                     color(com.google.android.material.R.attr.colorSurfaceContainer)), false))
                 toggle(content, getString(R.string.ui_different_colors_for_group_senders), getString(R.string.ui_automatically_give_each_sender_a_different_bubble_color_in_groups_colo),
                     Appearance.GROUP_COLORS)
             }
             else -> {
                 val content = settingsContent()
-                content.addView(button(getString(R.string.language)) {
-                    val choices = arrayOf(getString(R.string.language_system), getString(R.string.language_en), getString(R.string.language_ru))
-                    MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.language)
-                        .setSingleChoiceItems(choices, AppLanguage.tags.indexOf(AppLanguage.selected(requireContext())).coerceAtLeast(0)) { dialog, index ->
-                            dialog.dismiss()
-                            AppLanguage.set(requireContext(), AppLanguage.tags[index])
-                            NotificationPolling.channels(requireContext())
-                            if (NotificationPolling.enabled(requireContext()) && NotificationPolling.interval(requireContext()) < 900_000L)
-                                NotificationPolling.schedule(requireContext())
-                        }.setNegativeButton(R.string.ui_cancel, null).show()
-                })
-                content.addView(label(getString(R.string.language_detail), 14f, true))
                 listOf("Chats" to getString(R.string.ui_message_requests_and_group_invitations), "Privacy" to getString(R.string.ui_chat_security_blocked_devices_and_read_status),
-                    "Notifications" to getString(R.string.ui_request_alerts_and_background_checks), "Appearance" to getString(R.string.ui_theme_and_accent_color)).forEach { (title, detail) ->
-                    content.addView(button(sectionTitle(title)) { settingsSection = title; settingsBuilt = false; render() })
-                    content.addView(label(detail, 14f, true))
+                    "Notifications" to getString(R.string.ui_request_alerts_and_background_checks), "Appearance" to getString(R.string.ui_appearance_description)).forEach { (title, detail) ->
+                    settingCard(content, sectionTitle(title), detail).apply {
+                        contentDescription = getString(R.string.ui_open_setting, sectionTitle(title))
+                        isClickable = true; isFocusable = true
+                        addView(label("\u203a", 24f).apply { gravity = Gravity.END })
+                        setOnClickListener { settingsSection = title; settingsBuilt = false; render() }
+                    }
                 }
             }
         }
@@ -805,70 +911,17 @@ class ChatScreen : Fragment() {
         val prefs = NotificationPolling.preferences(context)
         val content = settingsContent()
         content.addView(label(getString(R.string.ui_request_alerts), 24f).apply { setTypeface(typeface, Typeface.BOLD) })
-        content.addView(MaterialCheckBox(context).apply {
-            text = getString(R.string.ui_alert_when_someone_tries_to_contact_me)
-            isChecked = MessageRequestNotifications.enabled(context)
-            setOnCheckedChangeListener { _, enabled ->
-                prefs.edit().putBoolean("message_request_alerts", enabled).apply()
-                if(enabled) {
-                    requestMessageAlertPermission(explicit = true)
-                    model.notifyPendingMessageRequests()
-                } else MessageRequestNotifications.clearMessages(context)
-            }
-        })
-        content.addView(label(getString(R.string.ui_new_contact_requests_notify_you_even_while_carriex_is_open_tap_the_not), 15f, true))
+        toggle(content, getString(R.string.ui_alert_when_someone_tries_to_contact_me),
+            getString(R.string.ui_new_contact_requests_notify_you_even_while_carriex_is_open_tap_the_not), "message_request_alerts", true) { enabled ->
+            if(enabled) { requestMessageAlertPermission(explicit = true); model.notifyPendingMessageRequests() }
+            else MessageRequestNotifications.clearMessages(context)
+        }
         toggle(content, getString(R.string.ui_group_invitation_alerts), getString(R.string.ui_notify_when_you_receive_a_group_invitation_including_while_carriex_is_),
             "group_invitation_alerts", true) { enabled ->
             if(enabled) { requestMessageAlertPermission(explicit = true); model.notifyPendingMessageRequests() }
             else MessageRequestNotifications.clearGroupAlerts(requireContext())
         }
-        content.addView(label(getString(R.string.ui_background_checks), 24f).apply { setTypeface(typeface, Typeface.BOLD) })
-        content.addView(label(getString(R.string.ui_get_a_notification_when_a_saved_server_has_pending_messages_checks_fet), 15f, true))
-        content.addView(MaterialCheckBox(context).apply {
-            text = getString(R.string.ui_check_for_pending_messages)
-            isChecked = NotificationPolling.enabled(context)
-            setOnCheckedChangeListener { _, enabled ->
-                prefs.edit().putBoolean("notifications_enabled", enabled).apply()
-                if(enabled && Build.VERSION.SDK_INT >= 33 &&
-                    androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                } else {
-                    scheduleNotifications(); refreshNotificationStatus()
-                    if(enabled) offerBatteryExemption()
-                }
-            }
-        })
-        content.addView(label(getString(R.string.ui_check_interval), 18f).apply { setTypeface(typeface, Typeface.BOLD) })
-        val millis = NotificationPolling.interval(context)
-        val units = longArrayOf(1000, 60_000, 3_600_000)
-        val unitIndex = prefs.getInt("notification_interval_unit", if(millis % 60_000 == 0L) 1 else 0).coerceIn(0, 2)
-        val storedInput = prefs.getString("notification_interval_input", null)
-        val current = storedInput?.takeIf { runCatching { PollInterval.parse(it, units[unitIndex]) == millis }.getOrDefault(false) }
-            ?: java.math.BigDecimal.valueOf(millis).divide(java.math.BigDecimal.valueOf(units[unitIndex]), java.math.MathContext.DECIMAL64).stripTrailingZeros().toPlainString()
-        val intervalRow = actionRow()
-        val intervalBox = column()
-        val input = field(intervalBox, getString(R.string.ui_custom_interval), current) { }.apply {
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        intervalRow.addView(intervalBox, LinearLayout.LayoutParams(0, -2, 1f))
-        val unit = Spinner(context).apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, arrayOf(getString(R.string.ui_seconds), getString(R.string.ui_minutes), getString(R.string.ui_hours)))
-            setSelection(unitIndex)
-            contentDescription = getString(R.string.ui_interval_unit)
-        }
-        intervalRow.addView(unit, LinearLayout.LayoutParams(-2, dp(56)).apply { marginStart = dp(8) })
-        content.addView(intervalRow)
-        content.addView(label(getString(R.string.ui_default_15_minutes_enter_any_custom_interval_of_at_least_one_second_in), 14f, true))
-        content.addView(button(getString(R.string.ui_apply_interval)) {
-            try {
-                val value = PollInterval.parse(input.text.toString(), units[unit.selectedItemPosition])
-                prefs.edit().putLong("notification_interval", value).putInt("notification_interval_unit", unit.selectedItemPosition)
-                    .putString("notification_interval_input", input.text.toString().trim()).apply()
-                input.error = null
-                scheduleNotifications(); refreshNotificationStatus()
-                Toast.makeText(context, getString(R.string.ui_checks_every, LocalizedFormat.interval(requireContext(), value)), Toast.LENGTH_SHORT).show()
-            } catch(e: IllegalArgumentException) { input.error = UiErrors.text(requireContext(), e.message) }
-        })
+        backgroundSettings(content)
         content.addView(label(getString(R.string.ui_servers_to_check), 18f).apply { setTypeface(typeface, Typeface.BOLD) })
         if(model.savedServers.isEmpty()) content.addView(label(getString(R.string.ui_add_a_server_from_the_servers_view_first), 14f, true))
         model.savedServers.forEach { server ->
@@ -882,14 +935,7 @@ class ChatScreen : Fragment() {
                 }
             })
         }
-        content.addView(label(getString(R.string.ui_android_settings), 18f).apply { setTypeface(typeface, Typeface.BOLD) })
-        content.addView(button(getString(R.string.ui_battery_optimization)) { offerBatteryExemption(manual = true) })
-        content.addView(button(getString(R.string.ui_notification_permission_channels)) {
-            startActivity(Intent(if(Build.VERSION.SDK_INT >= 26) Settings.ACTION_APP_NOTIFICATION_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                if(Build.VERSION.SDK_INT >= 26) putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                else data = Uri.parse("package:${context.packageName}")
-            })
-        })
+        androidNotificationSettings(content)
         settingsStatus = label("", 14f, true).also(content::addView)
         content.addView(button(getString(R.string.ui_check_now)) { }.apply {
             setOnClickListener {
@@ -909,10 +955,75 @@ class ChatScreen : Fragment() {
         })
     }
 
+    private fun backgroundSettings(content: LinearLayout) {
+        val context = requireContext()
+        val prefs = NotificationPolling.preferences(context)
+        toggle(content, getString(R.string.ui_background_checks),
+            getString(R.string.ui_get_a_notification_when_a_saved_server_has_pending_messages_checks_fet), "notifications_enabled", true) { enabled ->
+            if(enabled && Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(context,
+                android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            else { scheduleNotifications(); refreshNotificationStatus() }
+        }
+        val intervalCard = settingCard(content, getString(R.string.ui_check_interval),
+            getString(R.string.ui_default_15_minutes_enter_any_custom_interval_of_at_least_one_second_in))
+        val millis = NotificationPolling.interval(context)
+        val units = longArrayOf(1000, 60_000, 3_600_000)
+        val unitIndex = prefs.getInt("notification_interval_unit", if(millis % 60_000 == 0L) 1 else 0).coerceIn(0, 2)
+        val storedInput = prefs.getString("notification_interval_input", null)
+        val current = storedInput?.takeIf { runCatching { PollInterval.parse(it, units[unitIndex]) == millis }.getOrDefault(false) }
+            ?: java.math.BigDecimal.valueOf(millis).divide(java.math.BigDecimal.valueOf(units[unitIndex]), java.math.MathContext.DECIMAL64).stripTrailingZeros().toPlainString()
+        val intervalRow = actionRow()
+        val intervalBox = column()
+        val input = field(intervalBox, getString(R.string.ui_custom_interval), current) { }.apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        intervalRow.addView(intervalBox, LinearLayout.LayoutParams(0, -2, 1f))
+        val unit = Spinner(context).apply {
+            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, arrayOf(getString(R.string.ui_seconds), getString(R.string.ui_minutes), getString(R.string.ui_hours)))
+            setSelection(unitIndex)
+            contentDescription = getString(R.string.ui_interval_unit)
+        }
+        intervalRow.addView(unit, LinearLayout.LayoutParams(-2, dp(56)).apply { marginStart = dp(8) })
+        intervalCard.addView(intervalRow)
+        intervalCard.addView(button(getString(R.string.ui_apply_interval)) {
+            try {
+                val value = PollInterval.parse(input.text.toString(), units[unit.selectedItemPosition])
+                prefs.edit().putLong("notification_interval", value).putInt("notification_interval_unit", unit.selectedItemPosition)
+                    .putString("notification_interval_input", input.text.toString().trim()).apply()
+                input.error = null
+                scheduleNotifications(); refreshNotificationStatus()
+                Toast.makeText(context, getString(R.string.ui_checks_every, LocalizedFormat.interval(requireContext(), value)), Toast.LENGTH_SHORT).show()
+            } catch(e: IllegalArgumentException) { input.error = UiErrors.text(requireContext(), e.message) }
+        })
+    }
+
+    private fun androidNotificationSettings(content: LinearLayout) {
+        val battery = settingCard(content, getString(R.string.ui_battery_optimization), getString(R.string.ui_battery_detail))
+        batteryStatus = label("", 14f).also(battery::addView)
+        battery.addView(button(getString(R.string.ui_battery_settings)) { offerBatteryExemption(manual = true) })
+        val permission = settingCard(content, getString(R.string.ui_notifications), getString(R.string.ui_notification_detail))
+        permissionStatus = label("", 14f).also(permission::addView)
+        permission.addView(button(getString(R.string.ui_notification_permission_channels)) {
+            if(Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(requireContext(),
+                    android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            } else startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, requireContext().packageName))
+        })
+    }
+
     private fun refreshNotificationStatus() {
         val context = context ?: return
         val state = NotificationPolling.state(context)
         val optimized = !context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+        batteryStatus?.apply {
+            text = getString(if(optimized) R.string.ui_battery_enabled else R.string.ui_battery_disabled)
+            setTextColor(if(optimized) color(androidx.appcompat.R.attr.colorError) else 0xff2e7d32.toInt())
+        }
+        permissionStatus?.apply {
+            text = getString(if(NotificationPolling.permitted(context)) R.string.ui_notification_enabled else R.string.ui_notification_disabled)
+            setTextColor(if(NotificationPolling.permitted(context)) 0xff2e7d32.toInt() else color(androidx.appcompat.R.attr.colorError))
+        }
         settingsStatus?.text = buildString {
             append(if(NotificationPolling.enabled(context)) getString(R.string.ui_checks_enabled) else getString(R.string.ui_checks_disabled))
             append(" · ${LocalizedFormat.interval(requireContext(), NotificationPolling.interval(context))}\n")
@@ -1245,23 +1356,6 @@ class ChatScreen : Fragment() {
         row.addView(label(if(android.text.format.DateUtils.isToday(sentAt)) time else "$day, $time", 12f, true).apply {
             setSingleLine(true); contentDescription = getString(R.string.ui_last_message_sent, day, time)
         }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
-    }
-
-    private fun chatSecurity() {
-        val body=column().apply { setPadding(dp(12),dp(8),dp(12),dp(4)) }
-        body.addView(label(getString(R.string.ui_leave_fallback_disabled_for_stronger_initial_protection_double_ratchet),14f,true))
-        val fallback=MaterialCheckBox(requireContext()).apply {
-            text=getString(R.string.ui_allow_sessions_without_a_one_time_key);isChecked=model.allowFallback()
-        }
-        body.addView(fallback)
-        MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_chat_security))
-            .setView(body).setPositiveButton(getString(R.string.ui_done)) { _,_->model.setAllowFallback(fallback.isChecked) }
-            .setNeutralButton(getString(R.string.ui_blocked_devices)) { _,_->
-                val ids=model.blockedContacts()
-                MaterialAlertDialogBuilder(requireContext()).setTitle(getString(R.string.ui_tap_a_device_to_unblock))
-                    .setItems(ids.map { model.contactLabel(it) }.toTypedArray()) { _,index ->model.unblockContact(ids[index]) }
-                    .setNegativeButton(getString(R.string.ui_close),null).show()
-            }.setNegativeButton(getString(R.string.ui_cancel),null).show()
     }
 
     private fun createGroup() {
@@ -1726,7 +1820,7 @@ class ChatScreen : Fragment() {
         composer = null
         messageScroll = null; messageList = null; connectionLabel = null; errorLabel = null; sendButton = null; conversationTitle = null
         messageViews.clear()
-        settingsBuilt = false; settingsStatus = null; pageScroll = null
+        settingsBuilt = false; settingsStatus = null; pageScroll = null; setupBuiltStep = -1; batteryStatus = null; permissionStatus = null
         super.onDestroyView()
     }
 

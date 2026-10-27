@@ -535,4 +535,24 @@
     <string name="ui_empty_encrypted_frame">"Пустой зашифрованный кадр"</string>
     <string name="ui_invalid_ciphertext_length">"Некорректная длина шифротекста"</string>
     <string name="ui_invalid_ciphertext_hex">"Некорректный шестнадцатеричный шифротекст"</string>
+    <string name="ui_continue">"Продолжить"</string>
+    <string name="ui_finish_setup">"Завершить настройку"</string>
+    <string name="ui_setup_appearance">"Выберите оформление"</string>
+    <string name="ui_setup_notifications">"Оставайтесь на связи"</string>
+    <string name="ui_setup_notifications_detail">"Фоновые проверки включены для всех сохранённых серверов. Android может задерживать проверки для экономии заряда."</string>
+    <string name="ui_battery_enabled">"Оптимизация батареи: включена"</string>
+    <string name="ui_battery_disabled">"Оптимизация батареи: выключена"</string>
+    <string name="ui_battery_detail">"Разрешите работу без ограничений для более надёжных проверок."</string>
+    <string name="ui_notification_enabled">"Уведомления приложения: включены"</string>
+    <string name="ui_notification_disabled">"Уведомления приложения: выключены"</string>
+    <string name="ui_notification_detail">"Выберите, какие уведомления Android разрешает показывать Carriex."</string>
+    <string name="ui_preview">"Пример сообщений"</string>
+    <string name="ui_preview_detail">"Примеры сообщений с выбранными выше цветами."</string>
+    <string name="ui_server_security_selector">"Безопасность сервера"</string>
+    <string name="ui_server_security_detail">"Выберите сервер, чтобы настроить защиту сеансов и заблокированные контакты."</string>
+    <string name="ui_no_blocked_contacts">"На этом сервере нет заблокированных контактов."</string>
+    <string name="ui_unblock">"Разблокировать"</string>
+    <string name="ui_no_servers_security">"Добавьте сервер, чтобы настроить его безопасность и заблокированные контакты."</string>
+    <string name="ui_appearance_description">"Язык, тема, акцент и цвета сообщений."</string>
+    <string name="ui_open_setting">"Открыть: %1$s"</string>
 </resources>

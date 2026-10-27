@@ -39,7 +39,7 @@ object NotificationPolling {
     @Volatile var appVisible = false
     fun preferences(context: Context) = context.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
     fun state(context: Context) = context.getSharedPreferences("notification_state", Context.MODE_PRIVATE)
-    fun enabled(context: Context) = preferences(context).getBoolean("notifications_enabled", false)
+    fun enabled(context: Context) = preferences(context).getBoolean("notifications_enabled", true)
     fun interval(context: Context) = preferences(context).getLong("notification_interval", PollInterval.DEFAULT).coerceAtLeast(1000)
     fun permitted(context: Context) = (Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&

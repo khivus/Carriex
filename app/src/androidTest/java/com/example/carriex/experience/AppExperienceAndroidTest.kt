@@ -31,6 +31,63 @@ class AppExperienceAndroidTest {
     private fun descendants(view: View): List<View> = listOf(view) + if(view is ViewGroup)
         (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
 
+    @Test fun firstRunShowsOnlyLanguageThenAppearanceAndNotificationEssentials() {
+        val saved = prefs.all
+        val language = AppLanguage.selected(context)
+        prefs.edit().clear().commit()
+        instrumentation.runOnMainSync { AppLanguage.set(context, "en") }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                fun text(activity: MainActivity, id: Int) = descendants(activity.window.decorView).filterIsInstance<TextView>()
+                    .single { it.isShown && it.text.toString() == activity.getString(id) }
+                scenario.onActivity { activity ->
+                    text(activity, R.string.language)
+                    assertFalse(descendants(activity.window.decorView).filterIsInstance<TextView>().any {
+                        it.isShown && it.text.toString() == activity.getString(R.string.ui_servers)
+                    })
+                    text(activity, R.string.ui_continue).performClick()
+                    text(activity, R.string.ui_setup_appearance)
+                    assertEquals(1, prefs.getInt("setup_step", -1))
+                }
+                scenario.recreate()
+                scenario.onActivity { activity ->
+                    text(activity, R.string.ui_setup_appearance)
+                    text(activity, R.string.ui_skip).performClick()
+                    text(activity, R.string.ui_setup_notifications)
+                    assertTrue(com.example.carriex.notifications.NotificationPolling.enabled(context))
+                    assertEquals(900_000L, com.example.carriex.notifications.NotificationPolling.interval(context))
+                    val texts = descendants(activity.window.decorView).filterIsInstance<TextView>().map { it.text.toString() }
+                    assertTrue(texts.any { it == activity.getString(R.string.ui_battery_enabled) || it == activity.getString(R.string.ui_battery_disabled) })
+                    assertTrue(texts.any { it == activity.getString(R.string.ui_notification_enabled) || it == activity.getString(R.string.ui_notification_disabled) })
+                    text(activity, R.string.ui_finish_setup).performClick()
+                    assertTrue(prefs.getBoolean("setup_completed", false))
+                    text(activity, R.string.ui_scan_server_qr)
+                }
+                scenario.recreate()
+                scenario.onActivity { activity ->
+                    text(activity, R.string.ui_scan_server_qr)
+                    val nav = descendants(activity.window.decorView).filterIsInstance<NavigationView>().single()
+                    nav.menu.performIdentifierAction(4, 0)
+                    text(activity, R.string.ui_appearance).parent.let { it as View }.performClick()
+                    text(activity, R.string.language)
+                    assertEquals(3, descendants(activity.window.decorView).filterIsInstance<android.widget.RadioGroup>().size)
+                }
+            }
+        } finally {
+            val edit = prefs.edit().clear()
+            saved.forEach { (key, value) -> when(value) {
+                is String -> edit.putString(key, value)
+                is Boolean -> edit.putBoolean(key, value)
+                is Int -> edit.putInt(key, value)
+                is Long -> edit.putLong(key, value)
+                is Float -> edit.putFloat(key, value)
+                is Set<*> -> edit.putStringSet(key, value.filterIsInstance<String>().toSet())
+            } }
+            edit.commit()
+            instrumentation.runOnMainSync { AppLanguage.set(context, language) }
+        }
+    }
+
     @Test fun drawerShowsServerChatTreeAndDirectlySelectsCachedChat() {
         val cert = HeldCertificate.Builder().ecdsa256().commonName("Navigation fixture")
             .addSubjectAlternativeName("127.0.0.1").build()

@@ -203,7 +203,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     init {
         refreshServers()
         savedServers.forEach(::loadSaved)
-        savedServers.firstOrNull { it.url == autoConnectUrl }?.let(::connect)
+        if(preferences.getBoolean("setup_completed", false)) savedServers.firstOrNull { it.url == autoConnectUrl }?.let(::connect)
     }
 
     fun connect(server: PairedServer, navigate: Boolean = true) {
@@ -477,10 +477,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun allowFallback():Boolean = preferences.getBoolean("fallback_$scope",false)
-    fun setAllowFallback(value:Boolean) {
-        preferences.edit().putBoolean("fallback_$scope",value).commit(); changed()
-        if(value) chatStore.requests(scope).filter { it.peer in conversations }.forEach { service?.acceptRequests(it.peer) }
+    fun allowFallback(serverScope: String = scope):Boolean = preferences.getBoolean("fallback_$serverScope",false)
+    fun setAllowFallback(value:Boolean, serverScope: String = scope) {
+        preferences.edit().putBoolean("fallback_$serverScope",value).commit(); changed()
+        if(value && serverScope == activeServer?.fingerprint) chatStore.requests(serverScope).filter { it.peer in conversations }.forEach { service?.acceptRequests(it.peer) }
     }
     fun acceptRequest(peer:String) {
         if(!openChat(peer)) return
@@ -494,10 +494,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         MessageRequestNotifications.clear(getApplication(), scope)
         chatStore.discardRequests(scope,peer); service?.refreshPolicy(); changed()
     }
-    fun blockedContacts():List<String> = preferences.getStringSet("blocked_$scope",emptySet()).orEmpty().sorted()
-    fun unblockContact(peer:String) {
-        preferences.edit().putStringSet("blocked_$scope",blockedContacts().filter { it!=peer }.toSet()).commit()
-        service?.refreshPolicy();changed()
+    fun blockedContacts(serverScope: String = scope):List<String> = preferences.getStringSet("blocked_$serverScope",emptySet()).orEmpty().sorted()
+    fun unblockContact(peer:String, serverScope: String = scope) {
+        preferences.edit().putStringSet("blocked_$serverScope",blockedContacts(serverScope).filter { it!=peer }.toSet()).commit()
+        if(serverScope == activeServer?.fingerprint) service?.refreshPolicy()
+        changed()
     }
     fun contactKeyProtection(peer:String):String = when(chatStore.x3dh(scope).get("peer-protection/$peer")) {
         "one-time" -> "Double Ratchet; initial exchange used a one-time key."

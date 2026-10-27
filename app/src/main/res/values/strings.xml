@@ -535,4 +535,24 @@
     <string name="ui_empty_encrypted_frame">"Empty encrypted frame"</string>
     <string name="ui_invalid_ciphertext_length">"Invalid ciphertext length"</string>
     <string name="ui_invalid_ciphertext_hex">"Invalid ciphertext hex"</string>
+    <string name="ui_continue">"Continue"</string>
+    <string name="ui_finish_setup">"Finish setup"</string>
+    <string name="ui_setup_appearance">"Choose your appearance"</string>
+    <string name="ui_setup_notifications">"Stay notified"</string>
+    <string name="ui_setup_notifications_detail">"Background checks are on for all saved servers. Android may delay checks to save battery."</string>
+    <string name="ui_battery_enabled">"Battery optimization: enabled"</string>
+    <string name="ui_battery_disabled">"Battery optimization: disabled"</string>
+    <string name="ui_battery_detail">"Allow unrestricted battery use for more reliable checks."</string>
+    <string name="ui_notification_enabled">"App notifications: enabled"</string>
+    <string name="ui_notification_disabled">"App notifications: disabled"</string>
+    <string name="ui_notification_detail">"Choose which notifications Android allows Carriex to show."</string>
+    <string name="ui_preview">"Message preview"</string>
+    <string name="ui_preview_detail">"Example messages using the colors selected above."</string>
+    <string name="ui_server_security_selector">"Server security"</string>
+    <string name="ui_server_security_detail">"Choose a server to manage session protection and blocked contacts."</string>
+    <string name="ui_no_blocked_contacts">"No blocked contacts on this server."</string>
+    <string name="ui_unblock">"Unblock"</string>
+    <string name="ui_no_servers_security">"Add a server to configure its security and blocked contacts."</string>
+    <string name="ui_appearance_description">"Language, theme, accent and message colors."</string>
+    <string name="ui_open_setting">"Open %1$s"</string>
 </resources>

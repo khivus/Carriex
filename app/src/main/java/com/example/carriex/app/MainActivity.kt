@@ -81,7 +81,7 @@ class MainActivity : AppCompatActivity() {
         CountPoller.cancel()
         NotificationPolling.clearAlerts(this)
         ViewModelProvider(this)[ChatViewModel::class.java].onForeground()
-        runCatching { NotificationPolling.schedule(this) }
+        if(NotificationPolling.preferences(this).getBoolean("setup_completed", false)) runCatching { NotificationPolling.schedule(this) }
     }
 
     override fun onStop() {

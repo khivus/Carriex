@@ -112,8 +112,7 @@ snapshots remain relevant risks. This is not post-quantum or independently audit
 See the server's
 [X3DH protocol and limits](../Carriex-server/docs/X3DH.md).
 
-Replace [`icon.png`](icon.png) in the Android repository root:
-`D:\Uni\Carriex\Project\Carriex\icon.png`. Use a square PNG, preferably 512 x 512
+Replace [`icon.png`](icon.png) in the Android repository root. Use a square PNG, preferably 512 x 512
 or larger, with the main mark centered. Transparency is supported. Normal Android
 Studio builds, `assembleDebug`, `assembleRelease`, and bundle builds regenerate
 legacy, round, adaptive and themed launcher artwork automatically when this file

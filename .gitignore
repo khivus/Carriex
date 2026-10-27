@@ -87,3 +87,45 @@ Thumbs.db
 # Uncomment if you don't want to commit it:
 # google-services.json
 # firebase-appdistribution.properties
+
+# Local credentials, runtime exports, and generated release files.
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.key
+*.keystore.*
+*.jks.*
+/carriex-keystore
+/*-keystore
+keystore.properties
+signing.properties
+secrets.properties
+credentials.json
+service-account*.json
+google-services.json
+firebase-appdistribution.properties
+/app/release/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+.carriex-server/
+pairing-export/
+pairing.json
+pairing.png
+pairing.html
+*.zip
+*.tar
+*.tar.gz
+*.bundle
+*.hprof
+*.dmp
+screenshots/
+backups/
+.tmp-plan/
+.codex/
+.agents/

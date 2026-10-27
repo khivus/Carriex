@@ -75,6 +75,7 @@ class ServerConnectionAndroidTest {
     private val preferences get() = instrumentation.targetContext.getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
 
     @Before fun allowMessageRequestNotifications() {
+        preferences.edit().putBoolean("setup_completed", true).commit()
         if(Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.grantRuntimePermission(
             instrumentation.targetContext.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
     }
@@ -690,26 +691,39 @@ class ServerConnectionAndroidTest {
         }
     }
 
-    @Test fun backgroundClosesLiveSocketAndReturnPreservesOfflinePageAndDraft() = withSavedServers { first, second, store ->
+    @Test fun backgroundKeepsAuthenticatedSocketAndReturnPreservesOfflinePageAndDraft() = withSavedServers { first, second, store ->
         store.setAutoConnect(first.pairing.url)
+        preferences.edit().putBoolean("notifications_enabled", true).commit()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val model = model(scenario)
             awaitState("foreground connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.socket != null }
             val friend = "d".repeat(64)
             instrumentation.runOnMainSync {
+                model.viewSaved(first.pairing)
+                model.openChat(first.friend.userId)
                 model.viewSaved(second.pairing)
                 model.openChat(friend)
                 model.drafts[friend] = "Keep my offline draft"
             }
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
-            assertTrue("Background closes the message socket", first.closed.await(5, TimeUnit.SECONDS))
+            assertFalse("Background keeps the message socket", first.closed.await(300, TimeUnit.MILLISECONDS))
+            assertEquals(1, first.socketCount.get())
+            val incoming = first.encryptFromFriend("Arrived during app switch", System.currentTimeMillis())
+            first.socket!!.send(JSONObject().put("type", "message").put("message", JSONObject()
+                .put("from", incoming.from).put("id", incoming.id).put("ciphertext",
+                    (byteArrayOf(Message.MessageType.DATA.ordinal.toByte()) + incoming.content).joinToString("") { "%02x".format(it) })).toString())
+            awaitState("background message alert") {
+                instrumentation.targetContext.getSystemService(NotificationManager::class.java).activeNotifications.any {
+                    it.tag == "live:${first.pairing.fingerprint}" && it.id == 2
+                }
+            }
             instrumentation.runOnMainSync {
-                assertFalse(model.connected)
+                assertTrue(model.connected)
                 assertEquals(second.pairing.url, model.viewedServer?.url)
                 assertEquals(friend, model.selectedPeer)
             }
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
-            awaitState("resumed original connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.socketCount.get() == 2 }
+            awaitState("resumed original connection") { model.connectionStatus == ConnectionStatus.CONNECTED && first.socketCount.get() == 1 }
             instrumentation.runOnMainSync {
                 assertEquals(first.pairing.url, model.activeServer?.url)
                 assertEquals(second.pairing.url, model.viewedServer?.url)
@@ -722,7 +736,7 @@ class ServerConnectionAndroidTest {
             awaitState("notification server") { model.activeServer?.url == second.pairing.url && model.viewedServer?.url == second.pairing.url && model.connected }
             onView(withText("${second.pairing.name} - chats")).check(matches(isDisplayed()))
             com.example.carriex.notifications.NotificationPolling.openIntent(instrumentation.targetContext).send()
-            onView(withText("Carriex - notifications")).check(matches(isDisplayed()))
+            onView(allOf(withText("Notifications"), withParent(isAssignableFrom(com.google.android.material.appbar.MaterialToolbar::class.java)))).check(matches(isDisplayed()))
         }
     }
 

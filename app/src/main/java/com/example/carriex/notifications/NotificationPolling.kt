@@ -109,7 +109,21 @@ object NotificationPolling {
     }
     fun clearAlerts(context: Context) {
         context.getSystemService(NotificationManager::class.java).activeNotifications
-            .filter { it.id == 1 }.forEach { NotificationManagerCompat.from(context).cancel(it.tag,1) }
+            .filter { it.id == 1 || it.id == 2 }.forEach { NotificationManagerCompat.from(context).cancel(it.tag,it.id) }
+    }
+
+    /** A live socket acknowledges messages before the count-only scheduler can see them. */
+    fun liveMessage(context: Context, server: PairedServer) {
+        if(appVisible || !enabled(context) || !permitted(context) ||
+            !preferences(context).getBoolean("notify_${server.fingerprint}", true)) return
+        channels(context)
+        val notification = NotificationCompat.Builder(context, MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_message).setContentTitle(server.name)
+            .setContentText(context.getString(R.string.ui_new_messages_on_server))
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setAutoCancel(true)
+            .setContentIntent(openIntent(context, server)).build()
+        try { NotificationManagerCompat.from(context).notify("live:${server.fingerprint}", 2, notification) }
+        catch (_: SecurityException) { /* Android permission changed while the message arrived. */ }
     }
 }
 

@@ -555,4 +555,5 @@
     <string name="ui_no_servers_security">"Добавьте сервер, чтобы настроить его безопасность и заблокированные контакты."</string>
     <string name="ui_appearance_description">"Язык, тема, акцент и цвета сообщений."</string>
     <string name="ui_open_setting">"Открыть: %1$s"</string>
+    <string name="ui_new_messages_on_server">"Новые сообщения. Откройте Carriex, чтобы прочитать их."</string>
 </resources>

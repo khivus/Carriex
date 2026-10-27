@@ -90,7 +90,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var generation = 0
     private var viewGeneration = 0
     private var scope = ""
-    private var resumeServer: PairedServer? = null
 
     private fun refreshServers() {
         try { savedServers = serverStore.list(); autoConnectUrl = serverStore.autoConnectUrl() }
@@ -207,7 +206,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connect(server: PairedServer, navigate: Boolean = true) {
-        if(navigate) resumeServer = null
         if (activeServer?.url == server.url) {
             if (connecting || connected) { if (navigate) viewSaved(server); return }
         }
@@ -268,6 +266,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         groups.forEach { group -> optimisticGroups["$chatScope/${group.state.id}"]?.removeAll { pending ->
                             group.messages.any { it.id == pending.id }
                         } }
+                        val previous = groupsByServer[chatScope].orEmpty().associateBy { it.state.id }
+                        if(groups.any { group -> previous[group.state.id]?.let { old ->
+                            val known = old.messages.map { it.id }.toSet()
+                            group.messages.any { it.from != userId && it.id !in known }
+                        } == true }) com.example.carriex.notifications.NotificationPolling.liveMessage(getApplication(), server)
                         groupsByServer[chatScope] = groups
                         groups.forEach { MessageRequestNotifications.groupInvitation(getApplication(), server, it.state, userId) }
                         autoAcceptGroups(chatScope, groups)
@@ -286,6 +289,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 chats.conversations.getOrPut(message.from) { mutableListOf() }.add(message)
                                 if (serversVisible || scope != chatScope || selectedPeer != message.from)
                                     chats.unread[message.from] = (chats.unread[message.from] ?: 0) + 1
+                                com.example.carriex.notifications.NotificationPolling.liveMessage(getApplication(), server)
                                 saveContacts(chatScope); changed()
                             }
                         }
@@ -600,17 +604,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Background mode never downloads message bodies. Keep the page and drafts intact. */
+    /** Keep the authenticated socket and in-flight sends while Android keeps the process alive. */
     fun onBackground() {
-        resumeServer = activeServer?.takeIf { connected || connecting }
-        closeConnection()
-        changed()
+        handler.removeCallbacks(poll)
     }
 
     fun onForeground() {
-        val server = resumeServer
-        resumeServer = null
-        if (server != null && savedServers.any { it == server }) connect(server, navigate = false)
+        handler.removeCallbacks(poll)
+        if(service != null) handler.post(poll)
     }
 
     private fun closeConnection() {
@@ -638,7 +639,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disconnect() {
-        resumeServer = null
         closeConnection()
         viewGeneration++
         viewedServer = null

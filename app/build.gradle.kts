@@ -94,8 +94,8 @@ android {
         applicationId = "com.example.carriex"
         minSdk = 24
         targetSdk = 37
-        versionCode = 11
-        versionName = "1.10"
+        versionCode = 12
+        versionName = "1.11"
         val updateRepository = providers.gradleProperty("carriexUpdateRepository").getOrElse("khivus/Carriex")
         require(updateRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")

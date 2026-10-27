@@ -9,7 +9,7 @@ The build property `-PcarriexUpdateRepository=owner/repository` changes this sou
 Publish a stable GitHub release with a numeric tag such as `v1.11`, a description
 of its changes, and a **signed universal APK**. Its Android version name must
 match the tag and its version code must exceed the installed app's code. The
-current development version is `1.10`, code `11`. Use the same application ID
+current development version is `1.11`, code `12`. Use the same application ID
 and signing key for every update. Android Studio's signed APK export can create
 the release artifact; `assembleRelease` alone does not configure release signing.
 Do not publish a debug APK. A single `Carriex-v1.11-universal.apk` is recommended;
@@ -38,3 +38,18 @@ advertised range whenever they change the protocol or support a new app release.
 Live downloading and installation from GitHub can be exercised after a newer
 signed release is public. Local tests cover release selection, version ordering,
 compatibility and Android UI independently of repository visibility.
+
+## Test the 1.10 to 1.11 update
+
+Keep the signed GitHub **1.10** installed on the phone while building and signing
+**1.11/code 12** with the same release key. Publish the signed 1.11 APK as a stable
+`v1.11` release. Reopen 1.10 or use **Settings > App updates > Check for updates**,
+review the app-lock release notes, download, allow this install source if Android
+asks, and install. Saved identity, chats and servers should remain available.
+Then open **Settings > App lock** in 1.11 to configure protection. This update keeps
+the same setup revision and does not repeat completed onboarding.
+
+The relay patch **0.6.1** advertises support for app code 12 without changing the
+wire protocol. Update the relay first: older 0.6.0 advertises a maximum of code 11
+and the app will stop an explicitly incompatible connection. Codes 10–12 use the
+same protocol 3; codes 11 and 12 have full compatibility with relay 0.6.1.

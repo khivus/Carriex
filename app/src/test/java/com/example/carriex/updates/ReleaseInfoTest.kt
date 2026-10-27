@@ -12,6 +12,8 @@ class ReleaseInfoTest {
 
     @Test fun releaseVersionsAreNumericAndOnlyStableNewerVersionsQualify() {
         assertTrue(ReleaseInfo.newer("v1.10", "1.9"))
+        assertTrue(ReleaseInfo.newer("v1.11", "1.10"))
+        assertFalse(ReleaseInfo.newer("v1.10", "1.11"))
         assertFalse(ReleaseInfo.newer("1.9", "1.10"))
         assertFalse(ReleaseInfo.newer("1.10.0", "1.10"))
         assertFalse(ReleaseInfo.newer("v1.11-beta", "1.10"))

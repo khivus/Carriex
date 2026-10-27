@@ -107,6 +107,7 @@ class GroupMessagingService(
             val current = state(id) ?: error("Group is unavailable")
             val invitation = saved.get("invitation/$id")?.let { GroupState.parse(JSONObject(it), verifyChain = false) } ?: current
             val next = when(action) {
+                "rename" -> current.next(device, "rename", name = target.trim())
                 "join" -> GroupState.joinProposal(device, transport.groups(listOf(id, "join-proposal")).getJSONObject("state"), invitation)
                 "decline" -> GroupState.declineProposal(device, transport.groups(listOf(id, "decline-proposal")).getJSONObject("state"), invitation)
                 else -> current.next(device, action, target)
@@ -199,7 +200,7 @@ class GroupMessagingService(
     }
 
     private fun sameGroup(a: GroupState, b: GroupState) {
-        require(a.id == b.id && a.admin == b.admin && a.name == b.name) { "Group identity changed" }
+        require(a.id == b.id && a.admin == b.admin) { "Group identity changed" }
     }
 
     private fun synchronizeMembership(id: String, last: Int) {

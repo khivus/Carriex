@@ -59,6 +59,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val optimisticGroups = mutableMapOf<String, MutableList<Message>>()
     private val savingGroupMessages = mutableMapOf<String, String>()
     private val groupOperations = mutableMapOf<String, String>()
+    private val autoJoinAttempts = mutableSetOf<String>()
     val groups get() = groupsByServer[scope].orEmpty().map { group ->
         val pending = optimisticGroups["$scope/${group.state.id}"].orEmpty()
         group.copy(messages = group.messages + pending.filter { candidate -> group.messages.none { it.id == candidate.id } })
@@ -237,7 +238,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val activeService = MessagingService(userId, device, candidate, chatStore, chatScope,
                         contacts = { preferences.getStringSet("contacts_$chatScope",emptySet()).orEmpty().toSet() },
                         blocked = { preferences.getStringSet("blocked_$chatScope",emptySet()).orEmpty().toSet() },
-                        allowFallback = { preferences.getBoolean("fallback_$chatScope",false) })
+                        allowFallback = { preferences.getBoolean("fallback_$chatScope",false) },
+                        autoAccept = { preferences.getBoolean("auto_accept_messages", false) &&
+                            preferences.getStringSet("contacts_$chatScope", emptySet()).orEmpty().size < 128 },
+                        sendReadStatus = { preferences.getBoolean("send_read_status", false) })
                     service = activeService
                     val activeGroups = GroupMessagingService(device, candidate, chatStore, chatScope,
                         allowFallback = { preferences.getBoolean("fallback_$chatScope", false) })
@@ -248,6 +252,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         } }
                         groupsByServer[chatScope] = groups
                         groups.forEach { MessageRequestNotifications.groupInvitation(getApplication(), server, it.state, userId) }
+                        autoAcceptGroups(chatScope, groups)
                         changed()
                     } } }
                     activeGroups.onError = { detail -> handler.post { if(attempt == generation) { error = detail; changed() } } }
@@ -342,6 +347,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         groupOperations[key] = when(action) {
             "join" -> "Joining group…"
             "leave" -> "Leaving group…"
+            "rename" -> "Renaming group…"
             else -> "Updating group…"
         }
         if(action == "join") openGroup(id) else changed()
@@ -399,7 +405,38 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val blocked = preferences.getStringSet("blocked_${server.fingerprint}", emptySet()).orEmpty()
         val count = chatStore.requests(server.fingerprint).count { it.peer !in contacts && it.peer !in blocked }
         MessageRequestNotifications.show(getApplication(), server, count)
+        groupsByServer[server.fingerprint].orEmpty().forEach {
+            MessageRequestNotifications.groupInvitation(getApplication(), server, it.state, userId)
+        }
     }
+    private fun autoAcceptGroups(serverScope: String, groups: List<GroupConversation>) {
+        if(!preferences.getBoolean("auto_accept_groups", false) || activeServer?.fingerprint != serverScope) return
+        val active = groupService ?: return
+        val blocked = preferences.getStringSet("blocked_$serverScope", emptySet()).orEmpty()
+        groups.filter { userId in it.state.invited && !it.state.closed && !it.joining && it.state.admin !in blocked }.forEach { group ->
+            val key = "$serverScope/${group.state.id}/${group.state.revision}"
+            if(autoJoinAttempts.add(key)) active.change(group.state.id, "join", userId)
+        }
+    }
+
+    fun applyChatPreferences() {
+        if(!preferences.getBoolean("send_read_status", false)) worker.execute { chatStore.clearPendingReadStatus() }
+        val serverScope = activeServer?.fingerprint ?: return
+        if(preferences.getBoolean("auto_accept_messages", false)) {
+            val blocked = preferences.getStringSet("blocked_$serverScope", emptySet()).orEmpty()
+            chatStore.requests(serverScope).filter { it.peer !in blocked && it.reason == "Message request from an unknown contact" }
+                .forEach { service?.acceptRequests(it.peer) }
+        }
+        autoJoinAttempts.clear()
+        autoAcceptGroups(serverScope, groupsByServer[serverScope].orEmpty())
+    }
+
+    fun messagesViewed(ids: Collection<String>) {
+        if(!viewingConnectedServer || selectedPeer == null || !preferences.getBoolean("send_read_status", false)) return
+        val incoming = conversations[selectedPeer].orEmpty().filter { it.from != userId && it.id in ids }.map { it.id }
+        if(incoming.isNotEmpty()) service?.messagesViewed(incoming)
+    }
+
     fun removeChat(peer: String) {
         val chatScope = scope
         val chats = chatsFor(chatScope)
@@ -561,6 +598,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         generation++
         savingGroupMessages.clear()
         groupOperations.clear()
+        autoJoinAttempts.clear()
         optimisticGroups.clear()
         activeServer?.let { chatsByServer[it.fingerprint]?.loaded = false }
         handler.removeCallbacks(poll)

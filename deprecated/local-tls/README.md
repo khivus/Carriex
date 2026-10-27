@@ -1,5 +1,7 @@
 # Carriex Android
 
+**English** | [Русский](README.ru.md)
+
 ## Connect and chat
 
 1. Open the app and enter your Carriex server's domain or IP and port. Do not include a URL scheme or path. HTTPS and port 443 are the defaults; existing saved settings are retained. For the Android emulator, `10.0.2.2` reaches the host computer; physical devices need an accessible LAN or public address.

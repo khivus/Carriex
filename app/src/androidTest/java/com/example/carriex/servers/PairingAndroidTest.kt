@@ -40,9 +40,8 @@ class PairingAndroidTest {
         .put("type", "carriex-server").put("version", 1).put("name", "Pairing UI test")
         .put("url", url).put("certificate", cert.certificate.encoded.toByteString().base64()).toString()
 
-    private fun navigateAdd(action: String) {
-        onView(withContentDescription("Open navigation menu")).perform(click())
-        onView(withText("Add server")).perform(click())
+    private fun navigateAdd(action: Int) {
+        onView(withContentDescription(com.example.carriex.R.string.ui_add_server)).perform(click())
         onView(withText(action)).perform(click())
     }
 
@@ -55,7 +54,7 @@ class PairingAndroidTest {
         try {
             assertTrue(preferences.edit().remove("paired_servers_v1").commit())
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                navigateAdd("Import pairing text")
+                navigateAdd(com.example.carriex.R.string.ui_import_pairing_text)
                 onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText(text), closeSoftKeyboard())
                 onView(withId(android.R.id.button1)).perform(click())
                 onView(withText("Save server?")).check(matches(isDisplayed()))
@@ -84,7 +83,7 @@ class PairingAndroidTest {
     @Test fun qrScannerIsEmbeddedAndCancellationReturnsToSavedServers() {
         instrumentation.uiAutomation.executeShellCommand("pm grant com.example.carriex android.permission.CAMERA").close()
         ActivityScenario.launch(MainActivity::class.java).use {
-            navigateAdd("Scan server QR")
+            navigateAdd(com.example.carriex.R.string.ui_scan_server_qr)
             instrumentation.waitForIdleSync()
             instrumentation.runOnMainSync {
                 val scanner = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)

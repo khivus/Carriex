@@ -16,7 +16,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Phone-owned history and outgoing queue. Message bodies are encrypted before SQLite sees them. */
-class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteOpenHelper(context, databaseName, null, 8) {
+class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteOpenHelper(context, databaseName, null, 9) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE messages (
             id TEXT NOT NULL, scope TEXT NOT NULL, peer TEXT NOT NULL,
@@ -30,10 +30,11 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         createX3dhTables(db)
         createQuarantine(db)
         createRemovedMessages(db)
+        createReadStatus(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion !in 1..7 || newVersion !in 3..8 || oldVersion >= newVersion)
+        if (oldVersion !in 1..8 || newVersion !in 3..9 || oldVersion >= newVersion)
             throw IllegalStateException("Chat database migration from $oldVersion is required")
         if (oldVersion == 1) createExchangeTables(db)
         if (oldVersion < 3) {
@@ -76,6 +77,7 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         }
         if (oldVersion < 6 && newVersion >= 6) createQuarantine(db)
         if (oldVersion < 8 && newVersion >= 8) createRemovedMessages(db)
+        if (oldVersion < 9 && newVersion >= 9) createReadStatus(db)
         if (oldVersion < 7 && newVersion >= 7) {
             // A relay may already hold fixed-key wire data after a lost response.
             // Reseal under a new ID, preserving text and time, to avoid ID conflicts.
@@ -113,6 +115,7 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         db.execSQL("INSERT OR IGNORE INTO removed_message_ids SELECT scope,id FROM quarantined WHERE scope=? AND peer=?", arrayOf(scope,peer))
         for(table in listOf("messages","quarantined","pending_session","exchange_outbox"))
             db.delete(table,"scope=? AND peer=?",arrayOf(scope,peer))
+        ids.forEach { id -> db.delete("read_status", "scope=? AND id=?", arrayOf(scope,id)) }
         ids
     }
     data class Request(val peer: String, val reason: String, val count: Int)
@@ -317,10 +320,30 @@ class ChatStore(context: Context, databaseName: String = "chat-v1.db") : SQLiteO
         if (it.moveToFirst()) message.copy(content = open(scope, message.id, it.getBlob(0)), sentAt = null) else null
     }
 
+    private fun createReadStatus(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE read_status (scope TEXT NOT NULL,id TEXT NOT NULL,sent INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
+    }
+    fun queueReadStatus(scope: String, id: String, ownId: String) {
+        writableDatabase.execSQL("INSERT OR IGNORE INTO read_status(scope,id) SELECT scope,id FROM messages WHERE scope=? AND id=? AND recipient=? AND status IS NULL",
+            arrayOf(scope, id, ownId))
+    }
+    fun pendingReadStatus(scope: String): List<String> = readableDatabase.rawQuery(
+        "SELECT id FROM read_status WHERE scope=? AND sent=0 LIMIT 500", arrayOf(scope)).use { rows ->
+        buildList { while(rows.moveToNext()) add(rows.getString(0)) }
+    }
+    fun readStatusSent(scope: String, ids: List<String>) = atomic {
+        ids.forEach { id -> writableDatabase.execSQL("UPDATE read_status SET sent=1 WHERE scope=? AND id=?", arrayOf(scope,id)) }
+    }
+    fun clearPendingReadStatus() { writableDatabase.delete("read_status", "sent=0", null) }
+
     fun mark(scope: String, id: String, status: Message.DeliveryStatus) {
         val values = ContentValues().apply { put("status", status.name) }
         writableDatabase.update("messages", values,
-            "id=? AND scope=? AND status IS NOT NULL AND status IN (${if (status == Message.DeliveryStatus.SENT) "'SENDING'" else "'SENDING','SENT'"})",
+            "id=? AND scope=? AND status IS NOT NULL AND status IN (${when(status) {
+                Message.DeliveryStatus.SENT -> "'SENDING'"
+                Message.DeliveryStatus.READ -> "'SENDING','SENT','RECEIVED'"
+                else -> "'SENDING','SENT'"
+            }})",
             arrayOf(id, scope))
     }
 

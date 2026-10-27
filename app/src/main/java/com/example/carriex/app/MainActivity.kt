@@ -25,6 +25,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.example.carriex.localization.AppLanguage.restore(this)
+        delegate.localNightMode = com.example.carriex.ui.chat.Appearance.nightMode(this)
+        setTheme(com.example.carriex.ui.chat.Appearance.theme(this))
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 

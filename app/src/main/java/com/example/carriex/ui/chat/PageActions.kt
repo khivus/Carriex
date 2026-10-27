@@ -23,7 +23,7 @@ class PageActions(context: Context, content: View) : FrameLayout(context) {
     private val scrim = View(context).apply {
         setBackgroundColor(0x55000000)
         visibility = View.GONE
-        contentDescription = "Close new chat actions"
+        contentDescription = context.getString(R.string.ui_close_new_chat_actions)
         setOnClickListener { close() }
     }
     private val options = LinearLayout(context).apply {
@@ -48,11 +48,11 @@ class PageActions(context: Context, content: View) : FrameLayout(context) {
             options.addView(MaterialButton(context).apply {
                 text = title; isAllCaps = false; setIconResource(icon)
                 setOnClickListener { close(false); action() }
-            }, LinearLayout.LayoutParams(-2, dp(48)).apply { bottomMargin = dp(8) })
+            }, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(8) })
         }
-        option("Scan QR", R.drawable.ic_scan_qr) { scanContact?.invoke() }
-        option("Import text", R.drawable.ic_nav_edit) { importContact?.invoke() }
-        option("New group", R.drawable.ic_group) { createGroup?.invoke() }
+        option(context.getString(R.string.ui_scan_qr), R.drawable.ic_scan_qr) { scanContact?.invoke() }
+        option(context.getString(R.string.ui_import_text), R.drawable.ic_nav_edit) { importContact?.invoke() }
+        option(context.getString(R.string.ui_new_group), R.drawable.ic_group) { createGroup?.invoke() }
         addView(options, LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
             marginEnd = dp(20); bottomMargin = dp(88)
         })
@@ -66,7 +66,7 @@ class PageActions(context: Context, content: View) : FrameLayout(context) {
         close(false)
         mode = value
         fab.visibility = if(value == NONE) View.GONE else View.VISIBLE
-        fab.contentDescription = if(value == SERVERS) "Add server" else "New chat"
+        fab.contentDescription = if(value == SERVERS) context.getString(R.string.ui_add_server) else context.getString(R.string.ui_new_chat)
         fab.setImageResource(if(value == SERVERS) R.drawable.ic_nav_add else R.drawable.ic_nav_edit)
     }
 
@@ -81,7 +81,7 @@ class PageActions(context: Context, content: View) : FrameLayout(context) {
         }
         fab.setImageResource(R.drawable.ic_nav_add)
         fab.rotation = 45f
-        fab.contentDescription = "Close new chat actions"
+        fab.contentDescription = context.getString(R.string.ui_close_new_chat_actions)
     }
 
     fun close(animated: Boolean = true) {
@@ -89,7 +89,7 @@ class PageActions(context: Context, content: View) : FrameLayout(context) {
         scrim.visibility = View.GONE
         fab.rotation = 0f
         fab.setImageResource(if(mode == SERVERS) R.drawable.ic_nav_add else R.drawable.ic_nav_edit)
-        fab.contentDescription = if(mode == SERVERS) "Add server" else "New chat"
+        fab.contentDescription = if(mode == SERVERS) context.getString(R.string.ui_add_server) else context.getString(R.string.ui_new_chat)
         if(!animated) {
             for(index in 0 until options.childCount) options.getChildAt(index).animate().cancel()
             options.visibility = View.GONE

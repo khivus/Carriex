@@ -18,10 +18,14 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Carriex"
         android:usesCleartextTraffic="true">
+        <service android:name="androidx.appcompat.app.AppLocalesMetadataHolderService" android:enabled="false" android:exported="false">
+            <meta-data android:name="autoStoreLocales" android:value="true" />
+        </service>
         <service android:name=".notifications.CountJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <service android:name=".notifications.FastCountService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled custom interval polling of private self-hosted chat queue counts without an external push provider. The user selects the interval and can stop checks in settings." />

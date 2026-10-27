@@ -61,6 +61,46 @@ class GroupMessagingAndroidTest {
         catch(e: ServerTransport.GroupApiException) { assertEquals(code, e.code) }
     }
 
+    @Test fun adminRenameReachesEveryMemberAndPreexistingInviteCanJoinAfterRename() {
+        val url = InstrumentationRegistry.getArguments().getString("x3dhServer").orEmpty()
+        assumeTrue("Supply the actual test relay URL with x3dhServer", url.isNotEmpty())
+        Node(url).use { alice -> Node(url).use { bob -> Node(url).use { carol ->
+            val nodes = listOf(alice, bob, carol)
+            nodes.forEach { it.start() }
+            val created = LinkedBlockingQueue<String>()
+            alice.service.create("Original shared name") { created.offer(it) }
+            val id = created.poll(20, TimeUnit.SECONDS) ?: error("Group not created: $errors")
+            alice.service.change(id, "invite", bob.device.userId)
+            await("Bob invitation", nodes) { bob.group(id)?.state?.invited?.contains(bob.device.userId) == true }
+            bob.service.change(id, "join", bob.device.userId)
+            await("two members ready", nodes) { listOf(alice, bob).all { it.group(id)?.ready == true } }
+            alice.service.change(id, "invite", carol.device.userId)
+            await("Carol invited before rename", nodes) { carol.group(id)?.state?.invited?.contains(carol.device.userId) == true }
+            val epoch = alice.group(id)!!.state.epoch
+            val keys = listOf(alice.keyId(id), bob.keyId(id))
+            alice.service.change(id, "rename", "Renamed for everyone")
+            await("both members see the rename", nodes) { listOf(alice, bob).all { it.group(id)?.state?.name == "Renamed for everyone" } }
+            assertEquals(epoch, bob.group(id)!!.state.epoch)
+            assertEquals(keys, listOf(alice.keyId(id), bob.keyId(id)))
+            carol.service.change(id, "join", carol.device.userId)
+            await("old invitation joins renamed group with admission", nodes) { nodes.all {
+                it.group(id)?.let { group -> group.ready && !group.joining && group.state.name == "Renamed for everyone" && group.state.members.size == 3 } == true
+            } }
+            assertEquals(listOf("join"), carol.group(id)!!.events.map { it.state.json.getString("action") })
+            val sharedEpoch = alice.group(id)!!.state.epoch
+            val sharedKeys = nodes.map { it.keyId(id) }
+            alice.service.change(id, "rename", "Final shared name")
+            await("all three receive final name", nodes) { nodes.all { it.group(id)?.state?.name == "Final shared name" } }
+            assertEquals(sharedKeys, nodes.map { it.keyId(id) })
+            assertTrue(nodes.all { it.group(id)!!.state.epoch == sharedEpoch })
+            bob.restartGroups()
+            await("renamed title survives restart", nodes) { bob.group(id)?.let { it.ready && it.state.name == "Final shared name" } == true }
+            alice.service.send(id, "message after group rename")
+            await("group encryption still works after renaming", nodes) { listOf(bob, carol).all { it.group(id)?.messages?.any { m -> String(m.content) == "message after group rename" } == true } }
+            assertTrue("No unexpected protocol failures: $errors", errors.isEmpty())
+        } } }
+    }
+
     @Test fun privateJoinWaitsForAdminCheckpointAndRejoinHidesAbsence() {
         val url = InstrumentationRegistry.getArguments().getString("x3dhServer").orEmpty()
         assumeTrue("Supply the actual test relay URL with x3dhServer", url.isNotEmpty())

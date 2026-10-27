@@ -1,0 +1,42 @@
+<resources>
+    <style name="Theme.Carriex.Blue" parent="Theme.Carriex">
+        <item name="colorPrimary">#ADC6FF</item>
+        <item name="colorOnPrimary">#002E69</item>
+        <item name="colorPrimaryContainer">#004494</item>
+        <item name="colorOnPrimaryContainer">#D8E2FF</item>
+        <item name="colorSecondary">#ADC6FF</item>
+        <item name="colorOnSecondary">#002E69</item>
+        <item name="colorSecondaryContainer">#004494</item>
+        <item name="colorOnSecondaryContainer">#D8E2FF</item>
+    </style>
+    <style name="Theme.Carriex.Green" parent="Theme.Carriex">
+        <item name="colorPrimary">#6DDBAC</item>
+        <item name="colorOnPrimary">#003826</item>
+        <item name="colorPrimaryContainer">#005138</item>
+        <item name="colorOnPrimaryContainer">#89F8C7</item>
+        <item name="colorSecondary">#6DDBAC</item>
+        <item name="colorOnSecondary">#003826</item>
+        <item name="colorSecondaryContainer">#005138</item>
+        <item name="colorOnSecondaryContainer">#89F8C7</item>
+    </style>
+    <style name="Theme.Carriex.Orange" parent="Theme.Carriex">
+        <item name="colorPrimary">#FFB870</item>
+        <item name="colorOnPrimary">#4A2800</item>
+        <item name="colorPrimaryContainer">#693C00</item>
+        <item name="colorOnPrimaryContainer">#FFDDBA</item>
+        <item name="colorSecondary">#FFB870</item>
+        <item name="colorOnSecondary">#4A2800</item>
+        <item name="colorSecondaryContainer">#693C00</item>
+        <item name="colorOnSecondaryContainer">#FFDDBA</item>
+    </style>
+    <style name="Theme.Carriex.Rose" parent="Theme.Carriex">
+        <item name="colorPrimary">#FFB1CB</item>
+        <item name="colorOnPrimary">#5E1133</item>
+        <item name="colorPrimaryContainer">#7B2949</item>
+        <item name="colorOnPrimaryContainer">#FFD9E3</item>
+        <item name="colorSecondary">#FFB1CB</item>
+        <item name="colorOnSecondary">#5E1133</item>
+        <item name="colorSecondaryContainer">#7B2949</item>
+        <item name="colorOnSecondaryContainer">#FFD9E3</item>
+    </style>
+</resources>

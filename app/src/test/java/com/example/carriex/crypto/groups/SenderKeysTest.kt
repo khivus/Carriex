@@ -50,6 +50,37 @@ class SenderKeysTest {
     }
     private fun message(group: GroupState, text: String) = Message(admin.userId, group.id, text.toByteArray(), Message.MessageType.DATA, sentAt = 1234567890123)
 
+    @Test fun adminRenameIsSignedAndPreservesMembershipAndExistingSenderKeys() {
+        val original = group()
+        val own = engine.create(original, admin.userId)
+        val receiving = engine.receiveDistribution(original, admin.userId, engine.distribution(own))
+        val renamed = original.next(admin, "rename", name = "New shared name")
+        GroupState.parse(renamed.json, original)
+        assertEquals("New shared name", renamed.name)
+        assertEquals(original.epoch, renamed.epoch)
+        assertEquals(original.membershipHash, renamed.membershipHash)
+        assertEquals(original.members, renamed.members)
+        assertEquals(original.invited, renamed.invited)
+        val plain = message(renamed, "after rename")
+        val wire = engine.encrypt(renamed, own, plain).wire
+        assertArrayEquals(plain.content, engine.decrypt(renamed, receiving, admin.userId, plain.id, wire).message.content)
+        expectFailure { original.next(bob, "rename", name = "Not allowed") }
+        expectFailure { original.next(admin, "rename", name = " ") }
+        expectFailure { original.next(admin, "invite", carol.userId, name = "Hidden rename") }
+        expectFailure { GroupState.parse(JSONObject(renamed.json.toString()).put("name", "Forged"), original) }
+    }
+
+    @Test fun joiningAfterHiddenRenameRequiresExactAdminAdmission() {
+        val invitation = GroupState.create(admin, "Original name").next(admin, "invite", bob.userId)
+        val renamed = invitation.next(admin, "rename", name = "Shared new name")
+        val joined = renamed.next(bob, "join", bob.userId)
+        val proposal = JSONObject(joined.json.toString()).also { it.remove("auth_key"); it.remove("signature") }
+        val signed = GroupState.joinProposal(bob, proposal, invitation)
+        assertEquals(joined.hash, signed.hash)
+        expectFailure { GroupState.parse(signed.json, invitation) }
+        GroupAdmission.verify(GroupAdmission.create(joined, admin), signed, admin.userId, bob.userId)
+    }
+
     @Test fun admissionAnchorsExactJoinWithoutDisclosingEarlierEvents() {
         val created = GroupState.create(admin, "Private history")
         val first = created.next(admin, "invite", carol.userId).next(carol, "join", carol.userId)

@@ -7,5 +7,5 @@
     <fragment
         android:id="@+id/ChatScreen"
         android:name="com.example.carriex.ui.chat.ChatScreen"
-        android:label="Secure Messenger" />
+        android:label="@string/app_name" />
 </navigation>

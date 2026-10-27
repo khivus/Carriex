@@ -27,11 +27,12 @@ class GroupState private constructor(val json: JSONObject) {
         "$admin\n${X3dhCrypto.encode(name.toByteArray(Charsets.UTF_8))}\n${members.joinToString(",")}\n${invited.joinToString(",")}\n" +
         "${json.getString("actor")}\n${json.getString("action")}\n${json.getString("target")}\n${if(closed) 1 else 0}\n").toByteArray(Charsets.US_ASCII)
 
-    fun next(device: DeviceIdentity, action: String, target: String = ""): GroupState {
+    fun next(device: DeviceIdentity, action: String, target: String = "", name: String = this.name): GroupState {
         val people = members.toMutableSet(); val invitations = invited.toMutableSet()
         val actor = device.userId
         var closing = false
         when {
+            action == "rename" && actor == admin && target.isEmpty() && name != this.name -> Unit
             action == "invite" && actor == admin && validUser(target) && target !in people && target !in invitations -> invitations.add(target)
             action == "join" && actor == target && actor in invitations -> { invitations.remove(actor); people.add(actor) }
             action == "remove" && actor == admin && target != admin && (target in people || target in invitations) -> { people.remove(target); invitations.remove(target) }
@@ -42,6 +43,7 @@ class GroupState private constructor(val json: JSONObject) {
         }
         require(!closed && revision < 4096 && people.size + invitations.size <= 32) { "Group is closed or its membership limit was reached" }
         val changed = JSONObject(json.toString()).put("revision", revision + 1).put("previous", hash)
+            .put("name", name)
             .put("epoch", epoch + if(people.sorted() != members) 1 else 0)
             .put("members", JSONArray(people.sorted())).put("invited", JSONArray(invitations.sorted()))
             .put("actor", actor).put("action", action).put("target", target).put("closed", closing)
@@ -56,11 +58,14 @@ class GroupState private constructor(val json: JSONObject) {
             return
         }
         require(!old.closed && revision == old.revision + 1 && json.getString("previous") == old.hash) { "Group state rollback or missing membership transition" }
-        require(id == old.id && admin == old.admin && name == old.name) { "Group admin cannot be transferred" }
+        require(id == old.id && admin == old.admin) { "Group admin cannot be transferred" }
         val actor = json.getString("actor"); val target = json.getString("target")
+        val action = json.getString("action")
+        require(action == "rename" || name == old.name) { "Only a signed admin rename can change the group name" }
         val people = old.members.toMutableSet(); val invitations = old.invited.toMutableSet()
         var closing = false
         when {
+            action == "rename" && actor == admin && target.isEmpty() && name != old.name -> Unit
             json.getString("action") == "invite" && actor == admin && validUser(target) && target !in people && target !in invitations -> invitations.add(target)
             json.getString("action") == "join" && actor == target && actor in invitations -> { invitations.remove(actor); people.add(actor) }
             json.getString("action") == "remove" && actor == admin && target != admin && (target in people || target in invitations) -> { people.remove(target); invitations.remove(target) }
@@ -98,7 +103,10 @@ class GroupState private constructor(val json: JSONObject) {
                 invitation.json.getString("target") == device.userId && device.userId in invitation.invited)
             require(proposal.keys().asSequence().toSet() == fields - setOf("auth_key", "signature"))
             val joined = sign(JSONObject(proposal.toString()), device)
-            require(joined.id == invitation.id && joined.admin == invitation.admin && joined.name == invitation.name &&
+            // Hidden changes, including a rename, require the existing admin-signed
+            // admission checkpoint before this proposal becomes a trusted roster.
+            require(joined.id == invitation.id && joined.admin == invitation.admin &&
+                (joined.name == invitation.name || joined.revision > invitation.revision + 1) &&
                 joined.revision > invitation.revision && joined.epoch >= invitation.epoch + (if(action == "join") 1 else 0) && !joined.closed &&
                 joined.json.getString("action") == action && joined.json.getString("actor") == device.userId &&
                 joined.json.getString("target") == device.userId && (device.userId in joined.members) == (action == "join") &&

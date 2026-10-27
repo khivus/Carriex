@@ -1,0 +1,16 @@
+<resources>
+    <string name="language">Language</string>
+    <string name="empty_group">Say hello to %1$s</string>
+    <string name="language_detail">Choose the app language. Changes apply immediately; your current page is kept.</string>
+    <string name="language_system">System default</string>
+    <string name="language_en" translatable="false">English</string>
+    <string name="language_ru" translatable="false">Русский</string>
+    <string name="error_technical_details">Operation failed. Technical details: %1$s</string>
+    <string name="interval_fraction">%1$s %2$s</string>
+    <string name="interval_seconds_unit">seconds</string>
+    <plurals name="interval_seconds"><item quantity="one">%1$s second</item><item quantity="other">%1$s seconds</item></plurals>
+    <plurals name="interval_minutes"><item quantity="one">%1$s minute</item><item quantity="other">%1$s minutes</item></plurals>
+    <plurals name="interval_hours"><item quantity="one">%1$s hour</item><item quantity="other">%1$s hours</item></plurals>
+    <plurals name="pending_message_notification"><item quantity="one">%1$d pending message. Open Carriex to receive.</item><item quantity="other">%1$d pending messages. Open Carriex to receive.</item></plurals>
+    <plurals name="pending_request_notification"><item quantity="one">%1$d pending message request on %2$s. Tap to review.</item><item quantity="other">%1$d pending message requests on %2$s. Tap to review.</item></plurals>
+</resources>

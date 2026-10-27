@@ -25,6 +25,8 @@ class ChatStoreAndroidTest {
                 store.x3dh(scope).put("session/old","{\"root\":\"old secret\"}")
                 store.x3dh(scope).put("local/identity","identity stays")
                 store.x3dh(scope).put("peer-protection/friend","one-time")
+                store.writableDatabase.execSQL("DROP TABLE read_status")
+                store.writableDatabase.execSQL("DROP TABLE removed_message_ids")
                 store.writableDatabase.version=6
             }
             ChatStore(context,name).use { store ->
@@ -35,6 +37,32 @@ class ChatStoreAndroidTest {
                 assertTrue(store.x3dh(scope).keys("session/").isEmpty())
                 assertEquals("identity stays",store.x3dh(scope).get("local/identity"))
                 assertNull(store.x3dh(scope).get("peer-protection/friend"))
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
+    @Test fun readQueueSurvivesRestartIsScopedAndReadStatusNeverRegresses() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "read-queue-${UUID.randomUUID()}.db"
+        val incoming = Message("friend", "me", "visible".toByteArray(), Message.MessageType.DATA)
+        val outgoing = Message("me", "friend", "outgoing".toByteArray(), Message.MessageType.DATA, status = Message.DeliveryStatus.SENDING)
+        try {
+            ChatStore(context, name).use { db ->
+                db.addIncoming("server", incoming); db.addOutgoing("server", outgoing)
+                db.queueReadStatus("server", incoming.id, "me")
+                db.queueReadStatus("other-server", incoming.id, "me")
+                db.queueReadStatus("server", outgoing.id, "me")
+                assertTrue(db.pendingReadStatus("other-server").isEmpty())
+                assertEquals(listOf(incoming.id), db.pendingReadStatus("server"))
+                db.mark("server", outgoing.id, Message.DeliveryStatus.READ)
+                db.mark("server", outgoing.id, Message.DeliveryStatus.RECEIVED)
+            }
+            ChatStore(context, name).use { db ->
+                assertEquals(Message.DeliveryStatus.READ, db.history("server").last().status)
+                assertEquals(listOf(incoming.id), db.pendingReadStatus("server"))
+                db.readStatusSent("server", listOf(incoming.id))
+                db.queueReadStatus("server", incoming.id, "me")
+                assertTrue(db.pendingReadStatus("server").isEmpty())
             }
         } finally { context.deleteDatabase(name) }
     }

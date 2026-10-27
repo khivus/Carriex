@@ -80,6 +80,9 @@ class ServerConnectionAndroidTest {
         val server = MockWebServer()
         val socketCount = AtomicInteger()
         val ackCount = AtomicInteger()
+        val readIds = java.util.concurrent.CopyOnWriteArrayList<String>()
+        @Volatile var failNextAck = false
+        val failedAcks = AtomicInteger()
         val closed = CountDownLatch(1)
         val healthEntered = CountDownLatch(1)
         @Volatile var holdHealth: CountDownLatch? = null
@@ -226,6 +229,12 @@ class ServerConnectionAndroidTest {
                     }
                     request.path?.endsWith("/ack") == true -> {
                         ackCount.incrementAndGet()
+                        if(failNextAck) { failNextAck = false; failedAcks.incrementAndGet(); json("{}").setResponseCode(503) }
+                        else json("{}")
+                    }
+                    request.path?.endsWith("/read") == true -> {
+                        val ids = JSONObject(request.body.readUtf8()).getJSONArray("ids")
+                        (0 until ids.length()).forEach { readIds.add(ids.getString(it)) }
                         json("{}")
                     }
                     request.path?.endsWith("/policy") == true -> json("{}")
@@ -761,7 +770,7 @@ class ServerConnectionAndroidTest {
                 awaitState("request notification selects the original server") { model.viewedServer?.url == first.pairing.url }
                 onView(withText("Message requests")).check(matches(isDisplayed()))
                 awaitState("review clears request notification") { alert() == null }
-                onView(withText("${first.friend.userId.take(8)} · 2")).perform(click())
+                onView(withText("${first.friend.userId.take(8)} (2)")).perform(click())
                 onView(withText("Accept / retry")).perform(click())
                 awaitState("accepted request decrypts both saved messages") { model.conversations[first.friend.userId]?.size == 2 }
                 onView(withText("Private contact attempt")).check(matches(isDisplayed()))
@@ -789,6 +798,33 @@ class ServerConnectionAndroidTest {
                 db.discardRequests(first.pairing.fingerprint, other)
                 db.discardRequests(first.pairing.fingerprint, "c".repeat(64))
             }
+        }
+    }
+
+    @Test fun adminCanRenameGroupInMenuAndUpdatedNameIsShownInChats() = withSavedServers { first, _, store ->
+        store.setAutoConnect(first.pairing.url)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val model = model(scenario)
+            awaitState("connected for rename") { model.viewingConnectedServer && first.socket != null }
+            scenario.onActivity { model.createGroup("Original group name") }
+            awaitState("created group ready") { model.currentGroup?.ready == true }
+            val epoch = model.currentGroup!!.state.epoch
+            onView(withContentDescription("More options")).perform(click())
+            onView(withText("Rename group")).perform(click())
+            onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("   "), closeSoftKeyboard())
+            onView(withText("Save")).perform(click())
+            assertEquals("Original group name", model.currentGroup!!.state.name)
+            onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("Shared renamed group"), closeSoftKeyboard())
+            onView(withText("Save")).perform(click())
+            awaitState("signed rename accepted") { model.currentGroup?.state?.name == "Shared renamed group" }
+            assertEquals(epoch, model.currentGroup!!.state.epoch)
+            assertEquals("rename", first.groupEvents.last().getString("action"))
+            onView(withText("Shared renamed group")).check(matches(isDisplayed()))
+            onView(withText("You renamed the group to Shared renamed group")).check(matches(isDisplayed()))
+            onView(withContentDescription("Back to chats")).perform(click())
+            onView(withText("Shared renamed group")).check(matches(isDisplayed()))
+            scenario.recreate()
+            onView(withText("Shared renamed group")).check(matches(isDisplayed()))
         }
     }
 
@@ -991,7 +1027,8 @@ class ServerConnectionAndroidTest {
         first.groupEvents.add(initial.json)
         first.groupEvents.add(initial.next(first.friend, "invite", AndroidDeviceIdentity.load().userId).json)
         val originalAlerts = preferences.getBoolean("message_request_alerts", true)
-        preferences.edit().putBoolean("message_request_alerts", true).commit()
+        val originalInvites = preferences.getBoolean("group_invitation_alerts", true)
+        preferences.edit().putBoolean("message_request_alerts", false).putBoolean("group_invitation_alerts", true).commit()
         store.setAutoConnect(first.pairing.url)
         val context = instrumentation.targetContext
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -1022,9 +1059,14 @@ class ServerConnectionAndroidTest {
                 // Invoke the real toolbar control while testing its menu actions.
                 scenario.onActivity { activity -> descendants(activity.window.decorView)
                     .single { it.contentDescription == "More options" }.performClick() }
-                onView(withText("Group members")).check(matches(isDisplayed()))
+                val popupDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+                while(true) {
+                    try { onView(withText("Group members")).check(matches(isDisplayed())); break }
+                    catch(e: AssertionError) { if(System.nanoTime() >= popupDeadline) throw e; Thread.sleep(50) }
+                }
                 onView(withText("Invite person")).check(doesNotExist())
                 onView(withText("Delete group")).check(doesNotExist())
+                onView(withText("Rename group")).check(doesNotExist())
                 onView(withText("Leave group")).perform(click())
                 onView(withText("Leave")).perform(click())
                 awaitState("member leaves without moving admin rights") { model.currentGroup?.let {
@@ -1035,8 +1077,207 @@ class ServerConnectionAndroidTest {
             }
         } finally {
             MessageRequestNotifications.clearInvitations(context, first.pairing.fingerprint)
-            preferences.edit().putBoolean("message_request_alerts", originalAlerts).commit()
+            preferences.edit().putBoolean("message_request_alerts", originalAlerts).putBoolean("group_invitation_alerts", originalInvites).commit()
         }
+    }
+
+    @Test fun autoAcceptMessagesRespectsBlocksAndReadStatusRequiresVisibleChatAndOptIn() = withSavedServers { first, _, store ->
+        val oldAuto = preferences.getBoolean("auto_accept_messages", false)
+        val oldRead = preferences.getBoolean("send_read_status", false)
+        preferences.edit().putBoolean("auto_accept_messages", true).putBoolean("send_read_status", false).commit()
+        store.setAutoConnect(first.pairing.url)
+        fun send(wire: Message) {
+            assertTrue(first.socket!!.send(JSONObject().put("type", "message").put("message", JSONObject()
+                .put("from", wire.from).put("id", wire.id).put("ciphertext",
+                    (byteArrayOf(Message.MessageType.DATA.ordinal.toByte()) + wire.content).joinToString("") { "%02x".format(it) })).toString()))
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val model = model(scenario)
+                awaitState("connected") { model.connected && first.socket != null }
+                // Publication completes asynchronously after the socket is created.
+                val wire = first.encryptFromFriend("Automatically accepted", System.currentTimeMillis())
+                send(wire)
+                awaitState("unknown valid contact accepted") { model.conversations[first.friend.userId]?.size == 1 }
+                assertTrue(model.messageRequests().isEmpty())
+                assertTrue("Opening the app alone does not report read", first.readIds.isEmpty())
+                scenario.onActivity { model.openChat(first.friend.userId) }
+                onView(withText("Automatically accepted")).check(matches(isDisplayed()))
+                instrumentation.waitForIdleSync()
+                assertTrue("Read reporting is off by default", first.readIds.isEmpty())
+                first.failNextAck = true
+                preferences.edit().putBoolean("send_read_status", true).commit()
+                scenario.onActivity { model.applyChatPreferences(); model.openChat(first.friend.userId) }
+                awaitState("visible direct message reported read after opt-in") { wire.id in first.readIds }
+                assertEquals("Read reporting retried a lost delivery acknowledgement", 1, first.failedAcks.get())
+                scenario.onActivity { model.blockContact(first.friend.userId) }
+                val before = first.ackCount.get()
+                send(first.encryptFromFriend("Blocked message", System.currentTimeMillis()))
+                awaitState("blocked arrival retired") { first.ackCount.get() > before }
+                assertEquals(1, model.conversations[first.friend.userId]!!.size)
+                assertTrue(model.messageRequests().isEmpty())
+            }
+        } finally {
+            preferences.edit().putBoolean("auto_accept_messages", oldAuto).putBoolean("send_read_status", oldRead)
+                .remove("contacts_${first.pairing.fingerprint}").remove("blocked_${first.pairing.fingerprint}").commit()
+        }
+    }
+
+    @Test fun autoAcceptGroupInvitationJoinsWithoutOpeningAConversation() = withSavedServers { first, _, store ->
+        val initial = com.example.carriex.crypto.groups.GroupState.create(first.friend, "Automatic team")
+        first.groupEvents.add(initial.json)
+        first.groupEvents.add(initial.next(first.friend, "invite", AndroidDeviceIdentity.load().userId).json)
+        val oldAuto = preferences.getBoolean("auto_accept_groups", false)
+        preferences.edit().putBoolean("auto_accept_groups", true).commit()
+        store.setAutoConnect(first.pairing.url)
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val model = model(scenario)
+                awaitState("automatic invitation acceptance") { model.groups.any { model.userId in it.state.members } }
+                assertNull("Automatic joins keep the current page", model.selectedConversation)
+                assertEquals("join", first.groupEvents.last().getString("action"))
+            }
+        } finally { preferences.edit().putBoolean("auto_accept_groups", oldAuto).commit() }
+    }
+
+    @Test fun customBubbleColorsPersistAndGroupSendersAutomaticallyKeepDistinctColors() = withSavedServers { first, _, store ->
+        val ownKey = com.example.carriex.ui.chat.Appearance.OWN_BUBBLE
+        val incomingKey = com.example.carriex.ui.chat.Appearance.INCOMING_BUBBLE
+        val groupKey = com.example.carriex.ui.chat.Appearance.GROUP_COLORS
+        val originalOwn = preferences.getString(ownKey, null)
+        val originalIncoming = preferences.getString(incomingKey, null)
+        val originalGroups = preferences.getBoolean(groupKey, false)
+        preferences.edit().remove(ownKey).remove(incomingKey).putBoolean(groupKey, false).commit()
+        store.setAutoConnect(null)
+        val own = AndroidDeviceIdentity.load()
+        val other = DeviceIdentity(KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair())
+        val group = com.example.carriex.crypto.groups.GroupState.create(own, "Bubble colors group")
+            .next(own, "invite", first.friend.userId).next(first.friend, "join", first.friend.userId)
+            .next(own, "invite", other.userId).next(other, "join", other.userId)
+        val scope = first.pairing.fingerprint
+        val groupScope = com.example.carriex.messaging.GroupMessagingService.historyScope(scope, group.id)
+        ChatStore(instrumentation.targetContext).use { db ->
+            db.x3dh("$scope/groups").put("state/${group.id}", group.json.toString())
+            db.addIncoming(scope, Message(first.friend.userId, own.userId, "Direct incoming bubble".toByteArray(), Message.MessageType.DATA, sentAt = 1700000000123))
+            db.addOutgoing(scope, Message(own.userId, first.friend.userId, "Direct own bubble".toByteArray(), Message.MessageType.DATA, status = Message.DeliveryStatus.SENDING, sentAt = 1700000000124))
+            listOf(first.friend.userId to "Group Alice bubble", first.friend.userId to "Group Alice again", other.userId to "Group Bob bubble").forEach { (sender, text) ->
+                db.addIncoming(groupScope, Message(sender, group.id, text.toByteArray(), Message.MessageType.DATA, sentAt = 1700000000123))
+            }
+            db.addOutgoing(groupScope, Message(own.userId, group.id, "Group own bubble".toByteArray(), Message.MessageType.DATA, status = Message.DeliveryStatus.SENDING, sentAt = 1700000000124))
+        }
+        fun fill(scenario: ActivityScenario<MainActivity>, text: String): Int {
+            var result = 0
+            scenario.onActivity { activity ->
+                val body = descendants(activity.window.decorView).filterIsInstance<TextView>().single { it.text.toString() == text }
+                val bubble = body.parent as ViewGroup
+                result = (bubble.background as android.graphics.drawable.GradientDrawable).color!!.defaultColor
+                val expected = com.example.carriex.ui.chat.BubbleColors.foreground(result)
+                descendants(bubble).filterIsInstance<TextView>().forEach { assertEquals("Readable body, sender and footer", expected, it.currentTextColor) }
+            }
+            return result
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val model = model(scenario)
+                scenario.onActivity { model.viewSaved(first.pairing) }
+                awaitState("cached group loaded") { model.groups.any { it.state.id == group.id } && model.conversations[first.friend.userId]?.size == 2 }
+                scenario.onActivity { model.openChat(first.friend.userId) }
+                var accent = 0
+                scenario.onActivity { activity ->
+                    val value = android.util.TypedValue()
+                    activity.theme.resolveAttribute(androidx.appcompat.R.attr.colorPrimary, value, true)
+                    accent = value.data
+                }
+                assertEquals("Own bubbles follow the accent by default", accent, fill(scenario, "Direct own bubble"))
+                pressBack()
+                navigate("Settings")
+                onView(withText("Appearance")).perform(click())
+                onView(withContentDescription("Your message bubble color")).perform(scrollTo(), click())
+                onView(withText("Orange")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
+                onView(withContentDescription("Incoming message bubble color")).perform(scrollTo(), click())
+                onView(withText("Custom color...")).perform(click())
+                onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("#12ZZ00"), closeSoftKeyboard())
+                onView(withText("Save")).perform(click())
+                assertNull("Invalid hex is not saved", preferences.getString(incomingKey, null))
+                onView(isAssignableFrom(TextInputEditText::class.java)).perform(replaceText("#F7E9A8"), closeSoftKeyboard())
+                onView(withText("Save")).perform(click())
+                onView(withText("Different colors for group senders")).perform(scrollTo(), click())
+                scenario.recreate()
+                onView(withText("Different colors for group senders")).perform(scrollTo()).check(matches(isChecked()))
+                assertEquals("#EF6C00", preferences.getString(ownKey, null))
+                assertEquals("#F7E9A8", preferences.getString(incomingKey, null))
+                captureNavigation("appearance-message-bubbles")
+                pressBack(); pressBack()
+                scenario.onActivity { model.openChat(first.friend.userId) }
+                assertEquals(android.graphics.Color.parseColor("#EF6C00"), fill(scenario, "Direct own bubble"))
+                assertEquals(android.graphics.Color.parseColor("#F7E9A8"), fill(scenario, "Direct incoming bubble"))
+                scenario.onActivity { model.openGroup(group.id) }
+                val alice = fill(scenario, "Group Alice bubble")
+                val bob = fill(scenario, "Group Bob bubble")
+                assertNotEquals(alice, bob)
+                assertEquals(alice, fill(scenario, "Group Alice again"))
+                assertNotEquals(alice, fill(scenario, "Group own bubble"))
+                assertNotEquals(bob, fill(scenario, "Group own bubble"))
+                onView(withText("Group Alice bubble")).check(matches(isDisplayed()))
+                // Let the compositor present the new group page before capturing it.
+                Thread.sleep(150)
+                captureNavigation("group-message-bubble-colors")
+                scenario.recreate()
+                assertEquals(alice, fill(scenario, "Group Alice bubble"))
+                assertEquals(bob, fill(scenario, "Group Bob bubble"))
+                preferences.edit().putBoolean(groupKey, false).commit()
+                scenario.onActivity { model.openGroup(group.id) }
+                assertEquals(android.graphics.Color.parseColor("#F7E9A8"), fill(scenario, "Group Alice bubble"))
+                assertEquals(android.graphics.Color.parseColor("#F7E9A8"), fill(scenario, "Group Bob bubble"))
+            }
+        } finally {
+            preferences.edit().putString(ownKey, originalOwn).putString(incomingKey, originalIncoming).putBoolean(groupKey, originalGroups).also { edit ->
+                preferences.all.keys.filter { it.startsWith("group_bubble_${scope}_${group.id}_") }.forEach(edit::remove)
+            }.commit()
+        }
+    }
+
+    @Test fun settingsCategoriesDrawerOrderAndAppearanceSurviveRecreation() = withSavedServers { _, _, _ ->
+        val oldMode = preferences.getInt("appearance_mode", 0)
+        val oldAccent = preferences.getInt("appearance_accent", 0)
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                onView(withContentDescription("Open navigation menu")).perform(click())
+                scenario.onActivity { activity ->
+                    val nav = descendants(activity.window.decorView).filterIsInstance<com.google.android.material.navigation.NavigationView>().single()
+                    assertEquals(listOf("My ID (${AndroidDeviceIdentity.load().userId.take(8)})", "Chats", "Servers", "Settings"),
+                        (0 until nav.menu.size()).map { nav.menu.getItem(it).title.toString() })
+                }
+                onView(allOf(withText("Settings"), isDisplayed())).perform(click())
+                listOf("Chats", "Privacy", "Notifications", "Appearance").forEach { onView(allOf(withText(it), isDisplayed())).check(matches(isDisplayed())) }
+                captureNavigation("settings-categories")
+                onView(allOf(withText("Chats"), isDisplayed())).perform(click())
+                onView(withText("Auto-accept message requests")).check(matches(isDisplayed()))
+                onView(withText("Auto-accept group invitations")).check(matches(isDisplayed()))
+                pressBack()
+                onView(withText("Privacy")).perform(click())
+                onView(withText("Send message read status")).check(matches(isDisplayed()))
+                onView(withText("Chat security")).check(matches(isDisplayed()))
+                pressBack()
+                onView(withText("Appearance")).perform(click())
+                onView(withText(com.example.carriex.ui.chat.Appearance.modes(instrumentation.targetContext)[com.example.carriex.ui.chat.Appearance.mode(instrumentation.targetContext)])).perform(click())
+                onView(withText("Black")).perform(click())
+                onView(withText("Black")).check(matches(isDisplayed()))
+                onView(withText(com.example.carriex.ui.chat.Appearance.accents(instrumentation.targetContext)[com.example.carriex.ui.chat.Appearance.accent(instrumentation.targetContext)])).perform(click())
+                onView(withText("Green")).perform(click())
+                scenario.recreate()
+                onView(withText("Black")).check(matches(isDisplayed()))
+                onView(withText("Green")).check(matches(isDisplayed()))
+                captureNavigation("settings-appearance")
+                scenario.onActivity { activity ->
+                    assertEquals(android.content.res.Configuration.UI_MODE_NIGHT_YES,
+                        activity.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                    val value = android.util.TypedValue()
+                    activity.theme.resolveAttribute(androidx.appcompat.R.attr.colorPrimary, value, true)
+                    assertEquals(android.graphics.Color.parseColor("#6DDBAC"), value.data)
+                }
+            }
+        } finally { preferences.edit().putInt("appearance_mode", oldMode).putInt("appearance_accent", oldAccent).commit() }
     }
 
     @Test fun receiptsKeepScrollComposerAndSelectionAndEnterSendsOnce() = withSavedServers { first, _, store ->

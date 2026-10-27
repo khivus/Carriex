@@ -6,7 +6,7 @@ import java.math.BigDecimal
 object PollInterval {
     const val DEFAULT = 15 * 60_000L
     fun parse(value: String, unitMillis: Long): Long {
-        val exact = try { BigDecimal(value.trim()).multiply(BigDecimal.valueOf(unitMillis)) }
+        val exact = try { BigDecimal(value.trim().replace(',', '.')).multiply(BigDecimal.valueOf(unitMillis)) }
             catch (_: Exception) { throw IllegalArgumentException("Enter a positive interval in the selected unit.") }
         require(exact >= BigDecimal.valueOf(1000)) { "The interval must be at least one second." }
         return try { exact.setScale(0, java.math.RoundingMode.CEILING).longValueExact() }

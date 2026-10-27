@@ -18,6 +18,8 @@ class MessagingService(
     private val blocked: () -> Set<String> = { emptySet() },
     private val allowFallback: () -> Boolean = { false },
     private val protectUnknown: Boolean = true,
+    private val autoAccept: () -> Boolean = { false },
+    private val sendReadStatus: () -> Boolean = { false },
 ) {
     var onMessageDecrypted: ((Message) -> Boolean)? = null
     var onStatus: ((String, Message.DeliveryStatus) -> Unit)? = null
@@ -45,7 +47,8 @@ class MessagingService(
         if (closed) return
         ready = true
         transport.onReceipt = { id, state -> enqueue {
-            if (state == "received") updateStatus(id, Message.DeliveryStatus.RECEIVED)
+            if (state == "received" || state == "read") updateStatus(id,
+                if(state == "read") Message.DeliveryStatus.READ else Message.DeliveryStatus.RECEIVED)
         } }
         transport.connectWebSocket(userId) { message -> enqueue { receive(message) } }
         enqueue { retryPending() }
@@ -68,8 +71,13 @@ class MessagingService(
                 if (System.currentTimeMillis() >= refreshAt) refreshPrekeys()
                 transport.getAllMessages(userId).forEach(::receive)
                 transport.statuses(userId).forEach { (id, state) ->
-                    updateStatus(id, if (state == "received") Message.DeliveryStatus.RECEIVED else Message.DeliveryStatus.SENT)
+                    updateStatus(id, when(state) {
+                        "read" -> Message.DeliveryStatus.READ
+                        "received" -> Message.DeliveryStatus.RECEIVED
+                        else -> Message.DeliveryStatus.SENT
+                    })
                 }
+                flushReadStatus()
                 retryPending()
             } catch (e: Exception) { onError?.invoke("Unable to receive messages: ${e.message}") }
             finally { fetching.set(false) }
@@ -90,6 +98,19 @@ class MessagingService(
         }
         onRequestsChanged?.invoke()
     } }
+    fun messagesViewed(ids: Collection<String>) { enqueue {
+        if(!sendReadStatus()) return@enqueue
+        ids.forEach { chatStore.queueReadStatus(scope, it, userId) }
+        flushReadStatus()
+    } }
+    private fun flushReadStatus() {
+        if(!sendReadStatus() || closed) return
+        val ids = chatStore.pendingReadStatus(scope)
+        // A previous delivery acknowledgement may have failed in transit. Confirm it
+        // before reporting viewing so a successful read POST cannot retire the retry.
+        if(ids.isNotEmpty() && transport.acknowledge(userId, ids) && sendReadStatus() &&
+            transport.reportRead(userId, ids)) chatStore.readStatusSent(scope, ids)
+    }
     private fun retryPending() {
         chatStore.pending(scope).forEach { (plain, wire) ->
             if (!closed) {
@@ -125,7 +146,7 @@ class MessagingService(
         if(chatStore.wasRemoved(scope,message.id)) { transport.acknowledge(userId,message.id,true); return }
         if(message.from in blocked()) { transport.acknowledge(userId,message.id,true); return }
         if(!retryRequest && chatStore.hasQuarantined(scope,message.id)) { transport.acknowledge(userId,message.id,true); return }
-        if(protectUnknown && message.from !in contacts()) {
+        if(protectUnknown && message.from !in contacts() && !autoAccept()) {
             val (saved, firstRequest) = chatStore.atomic {
                 val first = chatStore.requests(scope).none { it.peer == message.from }
                 val saved = chatStore.quarantine(scope,message,"Message request from an unknown contact")

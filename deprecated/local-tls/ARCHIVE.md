@@ -1,5 +1,7 @@
 # Archived local TLS implementation
 
+**English** | [Русский](ARCHIVE.ru.md)
+
 Removed from the active application at the user's request: local CA provisioning and certificate import made the Docker-and-phone setup too complicated.
 
 This directory preserves the complete TLS-era versions of the affected client source files, the CA validator, localhost TLS tests, and client instructions. Files here are outside Gradle source sets and are not compiled into the APK. The matching server deployment is archived under `D:/Git/Carriex-server/deprecated/local-tls/`.

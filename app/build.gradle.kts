@@ -94,8 +94,8 @@ android {
         applicationId = "com.example.carriex"
         minSdk = 24
         targetSdk = 37
-        versionCode = 9
-        versionName = "1.8"
+        versionCode = 10
+        versionName = "1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -132,6 +132,12 @@ android {
     }
     buildFeatures {
         viewBinding = true
+    }
+    // Both languages must be available offline when changing language in Settings.
+    bundle {
+        language {
+            enableSplit = false
+        }
     }
     sourceSets {
         getByName("main") {

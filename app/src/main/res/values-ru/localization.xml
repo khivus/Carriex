@@ -1,0 +1,14 @@
+<resources>
+    <string name="language">Язык</string>
+    <string name="empty_group">Напишите в группу «%1$s»</string>
+    <string name="language_detail">Выберите язык приложения. Изменение применяется сразу; текущая страница сохраняется.</string>
+    <string name="language_system">Как в системе</string>
+    <string name="error_technical_details">Не удалось выполнить действие. Технические сведения: %1$s</string>
+    <string name="interval_fraction">%1$s %2$s</string>
+    <string name="interval_seconds_unit">секунды</string>
+    <plurals name="interval_seconds"><item quantity="one">%1$s секунда</item><item quantity="few">%1$s секунды</item><item quantity="many">%1$s секунд</item><item quantity="other">%1$s секунды</item></plurals>
+    <plurals name="interval_minutes"><item quantity="one">%1$s минута</item><item quantity="few">%1$s минуты</item><item quantity="many">%1$s минут</item><item quantity="other">%1$s минуты</item></plurals>
+    <plurals name="interval_hours"><item quantity="one">%1$s час</item><item quantity="few">%1$s часа</item><item quantity="many">%1$s часов</item><item quantity="other">%1$s часа</item></plurals>
+    <plurals name="pending_message_notification"><item quantity="one">Ожидает %1$d сообщение. Откройте Carriex для получения.</item><item quantity="few">Ожидают %1$d сообщения. Откройте Carriex для получения.</item><item quantity="many">Ожидают %1$d сообщений. Откройте Carriex для получения.</item><item quantity="other">Ожидает сообщений: %1$d. Откройте Carriex для получения.</item></plurals>
+    <plurals name="pending_request_notification"><item quantity="one">На сервере %2$s ожидает %1$d запрос на переписку. Нажмите для проверки.</item><item quantity="few">На сервере %2$s ожидают %1$d запроса на переписку. Нажмите для проверки.</item><item quantity="many">На сервере %2$s ожидают %1$d запросов на переписку. Нажмите для проверки.</item><item quantity="other">На сервере %2$s ожидает запросов на переписку: %1$d. Нажмите для проверки.</item></plurals>
+</resources>

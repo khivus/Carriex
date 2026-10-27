@@ -16,6 +16,8 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.example.carriex.localization.AppLanguage
+import com.example.carriex.localization.LocalizedFormat
 import com.example.carriex.R
 import com.example.carriex.app.MainActivity
 import com.example.carriex.auth.AndroidDeviceIdentity
@@ -47,18 +49,19 @@ object NotificationPolling {
         return ServerListStore({prefs.getString("paired_servers_v1",null)},{false}).list()
             .filter { prefs.getBoolean("notify_${it.fingerprint}",true) }.distinctBy { it.fingerprint }
     }
-    fun channels(context: Context) {
+    fun channels(baseContext: Context) {
+        val context = AppLanguage.context(baseContext)
         if(Build.VERSION.SDK_INT >= 26) context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(
-            NotificationChannel(MESSAGES,"Pending messages",NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description="Counts only. Messages are downloaded when Carriex is opened."
+            NotificationChannel(MESSAGES,context.getString(R.string.ui_pending_messages),NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description=context.getString(R.string.ui_counts_only_messages_are_downloaded_when_carriex_is_opened)
                 lockscreenVisibility=Notification.VISIBILITY_PRIVATE
             },
-            NotificationChannel(POLLING,"Custom polling status",NotificationManager.IMPORTANCE_LOW).apply {
-                description="Shown while a custom interval below 15 minutes is running."
+            NotificationChannel(POLLING,context.getString(R.string.ui_custom_polling_status),NotificationManager.IMPORTANCE_LOW).apply {
+                description=context.getString(R.string.ui_shown_while_a_custom_interval_below_15_minutes_is_running)
                 setShowBadge(false)
             },
-            NotificationChannel(MessageRequestNotifications.CHANNEL,"Message requests",NotificationManager.IMPORTANCE_HIGH).apply {
-                description="Someone new is trying to contact you, including while Carriex is open."
+            NotificationChannel(MessageRequestNotifications.CHANNEL,context.getString(R.string.ui_requests_and_invitations),NotificationManager.IMPORTANCE_HIGH).apply {
+                description=context.getString(R.string.ui_message_requests_and_group_invitations_including_while_carriex_is_open)
                 lockscreenVisibility=Notification.VISIBILITY_PRIVATE
             }))
     }
@@ -76,7 +79,7 @@ object NotificationPolling {
             scheduleWork(context)
             state(context).edit().remove("scheduler_error").apply()
         } catch(e: Exception) {
-            state(context).edit().putString("scheduler_error",e.message?.take(160) ?: "Open Carriex to resume checks.").apply()
+            state(context).edit().putString("scheduler_error",e.message?.take(160) ?: context.getString(R.string.ui_open_carriex_to_resume_checks)).apply()
             throw e
         }
     }
@@ -97,7 +100,7 @@ object NotificationPolling {
                     .setPeriodic(period,maxOf(JobInfo.getMinFlexMillis(),period/20))
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPersisted(true)
                     .setBackoffCriteria(60_000,JobInfo.BACKOFF_POLICY_EXPONENTIAL).build()
-                check(scheduler.schedule(job) == JobScheduler.RESULT_SUCCESS) { "Android could not schedule notification checks" }
+                check(scheduler.schedule(job) == JobScheduler.RESULT_SUCCESS) { context.getString(R.string.ui_android_could_not_schedule_notification_checks) }
             }
         } else {
             scheduler.cancel(JOB_ID)
@@ -123,7 +126,8 @@ object CountPoller {
         val credentials=CountCredentialStore(context,"${server.fingerprint}:${identity.userId}")
         Connection(client,CountTransport(server.url,DeviceAuthentication(server.url,identity,client),client,credentials::read,credentials::write))
     }
-    fun poll(context: Context, force: Boolean = false): Boolean {
+    fun poll(baseContext: Context, force: Boolean = false): Boolean {
+        val context = AppLanguage.context(baseContext)
         if(!NotificationPolling.enabled(context) || !NotificationPolling.permitted(context) ||
             (!force && NotificationPolling.appVisible) || !busy.compareAndSet(false,true)) return false
         try {
@@ -152,7 +156,7 @@ object CountPoller {
                         if(fresh || (active && prefs.getInt("count_$scope",0) != count.count)) {
                             val notification=NotificationCompat.Builder(context,NotificationPolling.MESSAGES)
                                 .setSmallIcon(R.drawable.ic_stat_message).setContentTitle(server.name)
-                                .setContentText("${count.count} pending ${if(count.count==1) "message" else "messages"}. Open Carriex to receive.")
+                                .setContentText(context.resources.getQuantityString(R.plurals.pending_message_notification, count.count, count.count))
                                 .setNumber(count.count).setAutoCancel(true).setOnlyAlertOnce(!fresh)
                                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                                 .setContentIntent(NotificationPolling.openIntent(context,server)).build()
@@ -171,7 +175,7 @@ object CountPoller {
                     val delay=maxOf(period,minOf(3_600_000L,period.coerceAtMost(3_600_000L) * (1L shl failures)))
                     val next=System.currentTimeMillis().let { if(Long.MAX_VALUE-it < delay) Long.MAX_VALUE else it+delay }
                     prefs.edit().putInt("failures_$scope",failures).putLong("next_$scope",next)
-                        .putString("error_$scope",e.message?.take(160) ?: "Count check failed").commit()
+                        .putString("error_$scope",e.message?.take(160) ?: context.getString(R.string.ui_count_check_failed)).commit()
                 }
             }
             return false
@@ -200,13 +204,14 @@ class FastCountService : Service() {
     private var task: java.util.concurrent.ScheduledFuture<*>?=null
     override fun onBind(intent: Intent?): IBinder?=null
     override fun onStartCommand(intent: Intent?,flags: Int,startId: Int): Int {
-        NotificationPolling.channels(this)
+        val context = AppLanguage.context(this)
+        NotificationPolling.channels(context)
         val status=NotificationCompat.Builder(this,NotificationPolling.POLLING).setSmallIcon(R.drawable.ic_stat_message)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .setContentTitle("Carriex notification checks")
-            .setContentText("Every ${PollInterval.label(NotificationPolling.interval(this))} · counts only")
+            .setContentTitle(context.getString(R.string.ui_carriex_notification_checks))
+            .setContentText(context.getString(R.string.ui_every_counts_only, LocalizedFormat.interval(context, NotificationPolling.interval(this))))
             .setOngoing(true).setContentIntent(NotificationPolling.openIntent(this))
-            .addAction(0,"Stop checks",PendingIntent.getBroadcast(this,0,
+            .addAction(0,context.getString(R.string.ui_stop_checks),PendingIntent.getBroadcast(this,0,
                 Intent(this,NotificationBootReceiver::class.java).setAction(NotificationPolling.ACTION_STOP),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).build()
         if(Build.VERSION.SDK_INT>=34) startForeground(NotificationPolling.SERVICE_ID,status,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -230,7 +235,7 @@ class NotificationBootReceiver : BroadcastReceiver() {
         }
         if(intent.action in setOf(Intent.ACTION_BOOT_COMPLETED,Intent.ACTION_MY_PACKAGE_REPLACED)) {
             runCatching { NotificationPolling.schedule(context) }.onFailure {
-                NotificationPolling.state(context).edit().putString("scheduler_error","Open Carriex to resume notification checks.").apply()
+                NotificationPolling.state(context).edit().putString("scheduler_error",context.getString(R.string.ui_open_carriex_to_resume_notification_checks)).apply()
             }
         }
     }

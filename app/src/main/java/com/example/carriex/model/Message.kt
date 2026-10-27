@@ -16,7 +16,7 @@ data class Message(
     /** Sender's original send time in epoch milliseconds; null for legacy messages. */
     val sentAt: Long? = null,
 ) {
-    enum class DeliveryStatus { SENDING, SENT, RECEIVED, EXPIRED, FAILED }
+    enum class DeliveryStatus { SENDING, SENT, RECEIVED, EXPIRED, FAILED, READ }
     enum class MessageType {
         KEY_EXCHANGE,
         DATA,

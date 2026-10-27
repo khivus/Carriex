@@ -86,7 +86,7 @@ class ContactQrAndroidTest {
             assertTrue(preferences.edit().putString("paired_servers_v1", JSONArray().put(profile.toJson()).toString()).commit())
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 assertSafeContentBounds(scenario)
-                navigate("My ID")
+                navigate("My ID (${AndroidDeviceIdentity.load().userId.take(8)})")
                 onView(withContentDescription("Your Carriex user ID QR")).inRoot(isDialog()).check { view, error ->
                     if (error != null) throw error
                     val bitmap = ((view as ImageView).drawable as BitmapDrawable).bitmap
@@ -192,7 +192,9 @@ class ContactQrAndroidTest {
                     }
                     assertSafeContentBounds(scenario)
                     openChatOptions()
-                    listOf("Message requests (0)", "Chat security", "Disconnect").forEach(::assertMenuIcon)
+                    listOf("Disconnect").forEach(::assertMenuIcon)
+                    onView(withText("Chat security")).check(doesNotExist())
+                    onView(withText("Message requests (0)")).check(doesNotExist())
                     pressBack()
                     onView(withContentDescription("New chat")).perform(click())
                     scan("Scan QR", ContactQr.encode(friend))
@@ -215,7 +217,7 @@ class ContactQrAndroidTest {
                     onView(withId(android.R.id.button1)).perform(click())
                     openChatOptions()
                     listOf("Contact ID", "Verify friend's ID", "Rename chat", "Remove chat", "Block contact",
-                        "Restart secure session", "Chat security").forEach(::assertMenuIcon)
+                        "Restart secure session").forEach(::assertMenuIcon)
                     scan("Verify friend's ID", ContactQr.encode("c".repeat(64)))
                     onView(withText("ID does not match")).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).perform(click())
@@ -233,7 +235,7 @@ class ContactQrAndroidTest {
                     onView(withText("This is your own ID")).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).perform(click())
                     onView(withContentDescription("Back to chats")).perform(click())
-                    navigate("My ID")
+                    navigate("My ID (${AndroidDeviceIdentity.load().userId.take(8)})")
                     onView(withContentDescription("Your Carriex user ID QR")).inRoot(isDialog()).check(matches(isDisplayed()))
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
                     onView(withContentDescription("New chat")).perform(click())

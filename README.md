@@ -1,20 +1,32 @@
 # Carriex Android
 
+**English** | [Русский](README.ru.md)
+
+Choose **Settings > Language** for **English**, **Русский**, or **System default**.
+See [localization review](LOCALIZATION.md) for a searchable side-by-side catalog,
+documentation comparison, paired emulator screenshots, and the acceptance checklist.
+
 ## Connect and chat
 
-1. On **Servers**, tap the floating **+** at the bottom right, then **Scan server QR** or **Import pairing text**. **Add server** is also available in the navigation drawer. Start the relay using `start-server.bat` or paired Docker; see `Carriex-server/PAIRING.md`. Review the server name, address, and trusted key before saving. Use pairing information obtained from the owner through a trusted channel.
+1. On **Servers**, tap the floating **+** at the bottom right, then **Scan server QR** or **Import pairing text**. Start the relay using `start-server.bat` or paired Docker; see `Carriex-server/PAIRING.md`. Review the server name, address, and trusted key before saving. Use pairing information obtained from the owner through a trusted channel.
 2. **Servers** shows compact saved-server cards. Tap a card to browse its saved chats; use the always-visible **Connect** / **Disconnect** and **View messages** buttons. **View messages** opens saved history without connecting. Startup settings, server details and forgetting remain in the three-dot menu. Startup selection is exclusive. Connection setup keeps saved history and the composer available; sending becomes available after authentication.
-3. **My ID** in the drawer shows this installation's public device ID and QR, with copy/share actions. Each installation uses a non-exportable Android Keystore P-256 key, preferring StrongBox where available.
-4. From a server's chats, tap the floating pencil button to expand **Scan QR** and **Import text**, then choose an optional contact name. In a conversation, use the top-right three-dot menu for contact details, verification, rename, remove, block, and secure-session restart. **Remove chat** deletes local messages and the draft without blocking the contact; secure-session state and message IDs are retained to prevent old redeliveries restoring deleted content. The chat list's three-dot menu contains **Message requests**, **Chat security**, and connection controls.
+3. **My ID (short ID)** at the top of the drawer shows this installation's public device ID and QR, with copy/share actions. Each installation uses a non-exportable Android Keystore P-256 key, preferring StrongBox where available.
+4. From a server's chats, tap the floating pencil button to expand **Scan QR** and **Import text**, then choose an optional contact name. In a conversation, use the top-right three-dot menu for contact details, verification, rename, remove, block, and secure-session restart. **Remove chat** deletes local messages and the draft without blocking the contact; secure-session state and message IDs are retained to prevent old redeliveries restoring deleted content. The chat list has a **Requests** button for both message requests and group invitations; its three-dot menu contains connection controls. **Chat security** and blocked devices are under **Settings > Privacy**.
 5. The conversation's back arrow or Android Back returns to its chat list. Back from the chat list opens the drawer; choose **Servers** there. Rightward swipes open the drawer; swipe-back remains disabled. The small **Connect** button in the chat list connects the viewed server directly. **Chats** in the drawer returns to the viewed server's list or asks which server to open. Browsing another server's saved history keeps the existing foreground connection active. Connecting to another server closes the previous connection first.
-6. **Notifications** in the drawer controls **message request alerts** and count-only background checks. New contact requests alert by default, including while Carriex is open; allow Android notification permission when prompted. Tap the alert to open that server's **Message requests**. Repeated messages from a pending requester do not alert again until the request is resolved. Request alerts work independently of background polling. The default background check interval is **15 minutes**. Enter a custom interval in seconds, minutes, or hours (decimals accepted), then choose **Apply interval**. Intervals below 15 minutes use an ongoing foreground-service notification; longer intervals use Android's network-aware periodic scheduler. Select the servers to check. The optional battery optimization prompt lets you keep optimization enabled or choose an exemption in Android settings. Checks remain best effort and may be delayed.
+6. The drawer order is **My ID (short ID)**, **Chats**, **Servers**, **Settings**. **Settings** contains **Chats**, **Privacy**, **Notifications**, and **Appearance**. **Settings > Notifications** controls separate **message request alerts** and **group invitation alerts**, plus count-only background checks. New contact requests alert by default, including while Carriex is open; allow Android notification permission when prompted. Tap either request alert to open that server's shared **Requests** page. Repeated messages from a pending requester do not alert again until the request is resolved. Request alerts work independently of background polling. The default background check interval is **15 minutes**. Enter a custom interval in seconds, minutes, or hours (decimals accepted), then choose **Apply interval**. Intervals below 15 minutes use an ongoing foreground-service notification; longer intervals use Android's network-aware periodic scheduler. Select the servers to check. The optional battery optimization prompt lets you keep optimization enabled or choose an exemption in Android settings. Checks remain best effort and may be delayed.
+
+**Settings > Chats** has opt-in auto-accept for message requests and group invitations, applying to all saved servers. Blocked senders stay blocked; invalid encrypted messages still require review. Existing pending requests are processed when auto-accept is enabled while connected. Automatic group joins keep the current page open.
+
+**Settings > Privacy > Send message read status** is **off by default**. When enabled, incoming direct-chat messages are reported as read only when their rows are visible in the foreground conversation. Reports retry while connected and are deduplicated across restarts. Turning the option off discards unsent read reports. Sender labels distinguish **Sent** (relay accepted), **Received** (recipient stored), and **Read** (recipient reported viewing). Read status is relay-reported metadata, not cryptographic proof; it requires the updated relay. Group messages continue to show delivery status only.
+
+**Settings > Appearance** offers **System default** (the default), **White**, and **Black**, plus Purple, Blue, Green, Orange, and Rose accents. Choices persist across restarts, and changing them keeps the current settings category open. **Message bubbles** lets you set separate outgoing and incoming colors using presets or a custom `#RRGGBB` color, with a live preview. Your bubbles follow the current accent color by default; incoming bubbles use the theme surface by default. Text, sender names and timestamps automatically use contrasting light or dark text. The optional **Different colors for group senders** setting assigns a distinct bubble color to each sender and saves those assignments locally per server and group, including across restarts and membership changes. Your own group messages retain your outgoing color. With this option off, incoming group messages use the selected incoming color.
 
 The top bar identifies the current page: **Carriex - servers**, **server name - chats**, or **Custom name (short ID)** inside a conversation. Page navigation and account actions stay in the drawer; conversation options are in the top-right three-dot menu.
 
 For groups, choose **pencil > New group** on a connected server's chat list.
 The creator is the permanent admin. Use the group's **three-dot menu > Invite
 person** to invite a device ID or scan the person's **My ID** QR code; invited
-people choose **Join group** or **Decline**. Joining shows progress immediately.
+people review it in **Requests > Group invitations** and choose **Join group** or **Decline**. Group invitation alerts are enabled by default and work independently of message request alerts. Joining shows progress immediately.
 Sending clears the composer and shows a pending message before network work;
 repeated taps cannot queue the same submission again. In **Group members**,
 select a person to rename them locally for this server. Signed membership
@@ -25,7 +37,11 @@ rejoining do not reveal earlier events or events from an absence. Update the
 relay and Android clients together for private history. If changes occurred
 between invitation and join, joining waits for the admin's app to come online
 and automatically confirm the new member's security checkpoint.
-The admin can remove people or revoke invitations through **Group members**.
+The admin can use **three-dot menu > Rename group** to change the shared name
+for all current members. Renames are signed, appear in group activity, and preserve
+membership and message keys. Older pending invitations remain joinable and adopt
+the current name after the admin confirms the join. The admin can remove people
+or revoke invitations through **Group members**.
 Members may leave; the admin can close the group with **Delete group**. Admin
 rights cannot be transferred. Each join, leave or removal automatically refreshes
 every current member's sender and signing keys; an offline member does this on
@@ -100,7 +116,7 @@ resources stay under `app/build/generated/launcherIcons/<variant>/res`; do not e
 them. The optional `python tools/update_launcher_icons.py <image.png>` command
 only copies artwork into `icon.png`.
 
-Outgoing bubbles show **Sending…** until the server accepts the message, **Sent** after server acceptance, and **Received** after the recipient saves it locally and acknowledges it. Messages waiting for acceptance are retried while connected and after restarting the app. The server holds encrypted messages until acknowledgement or expiry. There is no viewed/read receipt. Optional count-only background notifications are configured in the drawer. Receipt reporting can later be disabled independently of the recipient acknowledgement used to clear the server queue.
+Outgoing bubbles show **Sending…** until the server accepts the message, **Sent** after server acceptance, and **Received** after the recipient saves it locally and acknowledges it. Messages waiting for acceptance are retried while connected and after restarting the app. The server holds encrypted messages until acknowledgement or expiry. Optional direct-chat **Read** status is controlled by **Settings > Privacy > Send message read status**, off by default. Delivery acknowledgements still clear the queue independently. Count-only background notifications are configured in **Settings > Notifications**.
 
 Message footers show the sender's original send time using the phone's time format. For outgoing messages, the status sits nearer the center and the time nearer the screen edge; reserved status space keeps the time fixed during updates. The send time travels inside the encrypted payload and survives delayed delivery, retries, and history reloads. Received messages from older app versions have no recorded sender time and show no timestamp. Update both devices to read the new timestamped message format.
 

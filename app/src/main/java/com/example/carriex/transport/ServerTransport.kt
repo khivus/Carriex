@@ -308,13 +308,27 @@ class ServerTransport(
         authenticated(request).use { if(it.code!=200) throw IOException("Unable to synchronize inbox protection (HTTP ${it.code})") }
     }
 
-    fun acknowledge(userId: String, id: String, quarantine: Boolean = false): Boolean {
+    fun acknowledge(userId: String, id: String, quarantine: Boolean = false): Boolean =
+        acknowledge(userId, listOf(id), quarantine)
+
+    fun acknowledge(userId: String, ids: List<String>, quarantine: Boolean = false): Boolean {
         require(userId == authentication.userId)
         return try {
-            val body = JSONObject().put("ids", org.json.JSONArray().put(id)).put("quarantine",quarantine).toString()
+            val body = JSONObject().put("ids", org.json.JSONArray(ids)).put("quarantine",quarantine).toString()
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
             val request = Request.Builder().url(base.newBuilder().addPathSegment("messages")
                 .addPathSegment(userId).addPathSegment("ack").build()).post(body).build()
+            authenticated(request).use { it.code == 200 }
+        } catch (_: Exception) { false }
+    }
+
+    fun reportRead(userId: String, ids: List<String>): Boolean {
+        require(userId == authentication.userId)
+        return try {
+            val body = JSONObject().put("ids", org.json.JSONArray(ids)).toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder().url(base.newBuilder().addPathSegment("messages")
+                .addPathSegment(userId).addPathSegment("read").build()).post(body).build()
             authenticated(request).use { it.code == 200 }
         } catch (_: Exception) { false }
     }
